@@ -63,12 +63,27 @@ export const generateReferralCode = (): string => {
  */
 export const syncUserProfile = async (userId: string, settings: UserSettings, email?: string, role?: string) => {
   // Try to update first
-  const { data: existingProfile } = await supabase.from('profiles').select('id').eq('id', userId).single();
+  const { data: existingProfile } = await supabase.from('profiles').select('id, tier, role').eq('id', userId).single();
 
-  const profileData = {
+  // Protection against downgrading Tier
+  const tierOrder = { 'free': 0, 'premium': 1, 'vip': 2 };
+  let finalTier = settings.tier;
+  if (existingProfile?.tier && tierOrder[existingProfile.tier as keyof typeof tierOrder] > tierOrder[settings.tier as keyof typeof tierOrder]) {
+      console.log(`[Auth] Preventing tier downgrade from ${existingProfile.tier} to ${settings.tier}`);
+      finalTier = existingProfile.tier;
+  }
+
+  // Protection against downgrading Role (if already Admin, keep it)
+  let finalRole = role;
+  if (existingProfile?.role === 'admin' && role !== 'admin') {
+      console.log(`[Auth] Preserving Admin role for ${email}`);
+      finalRole = 'admin';
+  }
+
+  const profileData: any = {
     email: email,
-    role: role,
-    tier: settings.tier,
+    role: finalRole,
+    tier: finalTier,
     currency: settings.currency,
     theme: settings.theme,
     updated_at: new Date().toISOString(),
@@ -98,22 +113,17 @@ export const syncUserProfile = async (userId: string, settings: UserSettings, em
     error = insertError;
   }
 
-  // Security & Auto-Promotion Logic
+  // Security & Auto-Promotion Logic (ONLY Promote, NEVER Demote)
   if (email) {
     const isAdminEmail = ADMIN_EMAILS.includes(email.toLowerCase());
     
-    // Case 1: Whitelisted email -> Force Admin Role (Auto-Promote/Heal)
+    // Whitelisted email -> Force Admin Role (Auto-Promote/Heal)
     if (isAdminEmail) {
        if (role !== 'admin') {
            console.log(`[Auth] Auto-promoting ${email} to Admin`);
            await supabase.from('profiles').update({ role: 'admin' }).eq('id', userId);
        }
     } 
-    // Case 2: Not whitelisted but has admin role -> Force Downgrade
-    else if (role === 'admin') {
-       console.log(`[Auth] Demoting ${email} to User (Not in whitelist)`);
-       await supabase.from('profiles').update({ role: 'user' }).eq('id', userId);
-    }
   }
 
   if (error) {
@@ -217,15 +227,16 @@ export const resetPasswordForEmail = async (email: string) => {
  */
 export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem[], allocations: any[], alerts: Alert[] = []) => {
   if (!userId) return;
+  
   const { error } = await supabase
     .from('profiles')
-    .upsert({
-      id: userId,
+    .update({
       portfolio: portfolio,
       allocations: allocations,
       alerts: alerts,
       updated_at: new Date().toISOString()
-    }, { onConflict: 'id' }); 
+    })
+    .eq('id', userId);
 
   if (error) console.error("Erro ao salvar portfólio:", error);
 };

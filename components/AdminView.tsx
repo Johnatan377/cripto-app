@@ -111,17 +111,24 @@ const AdminView: React.FC<AdminViewProps> = ({ language }) => {
     }, [activeTab]);
 
     const loadData = async () => {
+        // Fallback safety timeout (10 seconds)
+        const safetyTimeout = setTimeout(() => {
+            if (loading) {
+                console.warn('AdminView: loadData safety timeout reached');
+                setLoading(false);
+            }
+        }, 10000);
+
         try {
-            // Removido setLoading(true) global agressivo para evitar flash de loading na UI inteira
             if (activeTab === 'airdrops') {
                 const data = await fetchAirdrops();
-                setAirdrops(data);
+                setAirdrops(data || []);
             } else if (activeTab === 'messages') {
                 const data = await fetchSupportMessages();
-                setMessages(data);
+                setMessages(data || []);
             } else if (activeTab === 'ticker') {
                 const data = await fetchTickerAnnouncements();
-                setAnnouncements(data);
+                setAnnouncements(data || []);
             } else if (activeTab === 'stats') {
                 const data = await fetchAdminStats();
                 setStats(data);
@@ -129,6 +136,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language }) => {
         } catch (error) {
             console.error('AdminView: Error loading data:', error);
         } finally {
+            clearTimeout(safetyTimeout);
             setLoading(false);
         }
     };
