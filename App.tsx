@@ -2019,7 +2019,7 @@ const App: React.FC = () => {
               <div className="bg-white p-4 rounded-2xl shadow-[0_0_30px_rgba(255,255,255,0.2)]">
                 {/* QR Code Gen using Google Charts API */}
                 <img
-                  src={`https://chart.googleapis.com/chart?chs=250x250&cht=qr&chl=${encodeURIComponent(SITE_URL)}&choe=UTF-8`}
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(SITE_URL)}`}
                   alt="QR Code"
                   className="w-48 h-48 md:w-64 md:h-64"
                 />
