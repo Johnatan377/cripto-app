@@ -588,7 +588,7 @@ const App: React.FC = () => {
   const lastSyncHash = useRef<string>("");
   const isCloudSyncInitDone = useRef<boolean>(false);
   const lastLocalChange = useRef<number>(0);
-  const localFiredAlerts = useRef<Set<string>>(new Set());
+
 
   // Consolidate Cloud Data Initialization
   const initializeCloudData = useCallback(async (userId: string, session: any) => {
@@ -856,6 +856,11 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('alerts');
     return saved ? JSON.parse(saved) : [];
   });
+
+  // Inicializar com alertas que JÁ dispararam para não tocar som na recarga da página
+  const localFiredAlerts = useRef<Set<string>>(new Set(
+    alerts.filter(a => a.triggeredAt).map(a => `${a.id}-${a.triggeredAt}`)
+  ));
 
   // State for Allocations (lifted up for sync, but still managed by Child mostly)
   const [allocationLogs, setAllocationLogs] = useState<MissionLog[]>(() => {
