@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import {
-    LayoutDashboard, Plus, Trash2, Edit2, MessageSquare,
+    LayoutDashboard, Plus, Trash2, Edit2,
     CheckCircle, X, Search, Mail, User, Clock,
     Loader2, ChevronRight, Save, Globe, Info, Zap, Calendar, Link as LinkIcon,
     Flame, Rocket, Bell, AlertTriangle, ShieldCheck, Heart, Star
@@ -9,8 +9,9 @@ import {
 import { fetchAirdrops, createAirdrop, updateAirdrop, deleteAirdrop } from '../services/airdropService';
 import { fetchTickerAnnouncements, createTickerAnnouncement, updateTickerAnnouncement, deleteTickerAnnouncement } from '../services/tickerService';
 import { fetchAdminStats, AdminStats } from '../services/adminService';
+import { fetchSupportMessages, markMessageAsRead, deleteSupportMessage, sendSupportReply, SupportMessage } from '../services/messageService';
 import { AirdropProject, AirdropStep, TickerAnnouncement } from '../types';
-import { sendSupportMessage, fetchSupportMessages, markMessageAsRead, deleteSupportMessage, SupportMessage, sendSupportReply } from '../services/messageService';
+
 import { supabase } from '../services/supabaseClient';
 
 interface AdminViewProps {
@@ -23,8 +24,9 @@ const CATEGORIES = ['DeFi', 'Testnet', 'GameFi', 'L2', 'Stable Coin', 'PerpDex',
 const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
     const [activeTab, setActiveTab] = useState<'airdrops' | 'messages' | 'ticker' | 'stats'>('airdrops');
     const [airdrops, setAirdrops] = useState<AirdropProject[]>([]);
-    const [messages, setMessages] = useState<SupportMessage[]>([]);
+
     const [announcements, setAnnouncements] = useState<TickerAnnouncement[]>([]);
+    const [messages, setMessages] = useState<SupportMessage[]>([]);
     const [stats, setStats] = useState<AdminStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -34,10 +36,10 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
 
 
     // Reply State
-    const [replyingToId, setReplyingToId] = useState<string | null>(null);
+    const [replyingTo, setReplyingTo] = useState<SupportMessage | null>(null);
     const [replyText, setReplyText] = useState('');
-    const [replyLoading, setReplyLoading] = useState(false);
-    const [replyLanguage, setReplyLanguage] = useState<'pt' | 'en'>('en');
+    const [replyLanguage, setReplyLanguage] = useState<'pt' | 'en'>('pt');
+
 
     // Form States
     const [isAirdropModalOpen, setIsAirdropModalOpen] = useState(false);
@@ -282,36 +284,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
         await loadData();
     };
 
-    const handleMarkAsRead = async (id: string, e?: React.MouseEvent) => {
-        if (e) e.stopPropagation();
-        try {
-            await markMessageAsRead(id);
-            setMessages(prev => prev.map(m => m.id === id ? { ...m, read: true } : m));
-            // removido o loadData() agressivo que poderia resetar o estado global
-        } catch (error) {
-            console.error('Error marking as read:', error);
-        }
-    };
 
-
-
-    const handleSendReply = async (msg: SupportMessage) => {
-        if (!replyText.trim()) return;
-        setReplyLoading(true);
-        const success = await sendSupportReply(msg.id, replyText, msg.email, msg.name, userAccount.id, replyLanguage);
-        if (success) {
-            alert('Resposta enviada com sucesso! (Email disparado)');
-            setReplyingToId(null);
-            setReplyText('');
-            if (!msg.read) {
-                await markMessageAsRead(msg.id);
-            }
-            loadData();
-        } else {
-            alert('Erro ao enviar resposta. Verifique os logs.');
-        }
-        setReplyLoading(false);
-    };
 
     const handleTickerSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -370,12 +343,14 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         >
                             <Globe size={16} /> Airdrops
                         </button>
+
                         <button
                             onClick={() => setActiveTab('messages')}
                             className={`px-6 py-3 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${activeTab === 'messages' ? 'bg-white text-black shadow-xl shadow-white/5' : 'text-white/40 hover:text-white'}`}
                         >
-                            <MessageSquare size={16} /> Mensagens {messages.filter(m => !m.read).length > 0 && <span className="w-2 h-2 bg-red-500 rounded-full animate-pulse" />}
+                            <Mail size={16} /> Mensagens
                         </button>
+
                         <button
                             onClick={() => setActiveTab('ticker')}
                             className={`px-6 py-3 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${activeTab === 'ticker' ? 'bg-white text-black shadow-xl shadow-white/5' : 'text-white/40 hover:text-white'}`}
@@ -459,9 +434,19 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                     </div>
                 )}
 
+
+
                 {activeTab === 'messages' && (
                     <div className="space-y-6">
-                        <h2 className="text-lg font-black uppercase">{language === 'pt' ? 'Mensagens de Suporte' : 'Support Messages'}</h2>
+                        <div className="flex justify-between items-center">
+                            <h2 className="text-lg font-black uppercase">{language === 'pt' ? 'Mensagens de Suporte' : 'Support Messages'}</h2>
+                            <button
+                                onClick={loadData}
+                                className="bg-white/5 hover:bg-white/10 text-white/40 hover:text-white p-3 rounded-xl transition-all"
+                            >
+                                <Rocket size={18} className={loading ? "animate-spin" : ""} />
+                            </button>
+                        </div>
 
                         {loading ? (
                             <div className="flex justify-center py-20"><Loader2 className="animate-spin text-yellow-400" size={40} /></div>
@@ -472,116 +457,66 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         ) : (
                             <div className="space-y-4">
                                 {messages.map(msg => (
-                                    <div key={msg.id} className={`p-6 rounded-[32px] border transition-all ${msg.read ? 'bg-zinc-900/30 border-white/5 opacity-60' : 'bg-zinc-900 border-yellow-400/20 shadow-xl shadow-yellow-400/5'} ${replyingToId === msg.id ? 'border-yellow-400 opacity-100 ring-1 ring-yellow-400' : ''}`}>
-                                        <div className="flex flex-col md:flex-row justify-between gap-4 mb-4">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-10 h-10 bg-white/5 rounded-2xl flex items-center justify-center border border-white/10">
-                                                    <User size={20} className="text-white/40" />
+                                    <div key={msg.id} className={`bg-zinc-900/50 border border-white/5 rounded-[32px] p-6 transition-all flex flex-col gap-4 group ${!msg.read ? 'border-yellow-400/30 bg-yellow-400/5' : 'hover:border-white/10'}`}>
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex gap-4">
+                                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center border ${!msg.read ? 'bg-yellow-400 text-black border-yellow-400' : 'bg-white/5 text-white/40 border-white/10'}`}>
+                                                    <User size={20} />
                                                 </div>
                                                 <div>
-                                                    <h4 className="font-black uppercase text-xs">{msg.name}</h4>
-                                                    <p className="text-[10px] text-yellow-400/70 font-bold">{msg.email}</p>
-                                                    {msg.direction === 'outbound' && (
-                                                        <span className="text-[9px] bg-white/10 px-2 py-0.5 rounded text-white/50 uppercase block w-fit mt-1">Resposta Enviada</span>
-                                                    )}
+                                                    <h3 className="font-black uppercase text-sm flex items-center gap-2">
+                                                        {msg.name}
+                                                        {!msg.read && <span className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>}
+                                                    </h3>
+                                                    <p className="text-[10px] text-white/40 font-bold uppercase tracking-wider">{msg.email}</p>
+                                                    <div className="flex items-center gap-2 mt-1">
+                                                        <Clock size={10} className="text-white/20" />
+                                                        <span className="text-[9px] text-white/20 font-bold">
+                                                            {new Date(msg.created_at).toLocaleString()}
+                                                        </span>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div className="flex items-center gap-4">
-                                                <span className="text-[9px] text-white/30 uppercase font-bold flex items-center gap-1">
-                                                    <Clock size={10} /> {new Date(msg.created_at).toLocaleString()}
-                                                </span>
-
-                                                {/* Reply Button */}
-                                                {msg.direction !== 'outbound' && (
-                                                    <button
-                                                        onClick={() => {
-                                                            if (replyingToId === msg.id) {
-                                                                setReplyingToId(null);
-                                                            } else {
-                                                                setReplyingToId(msg.id);
-                                                                setReplyText('');
-                                                            }
-                                                        }}
-                                                        className={`px-4 py-2 rounded-lg transition-all flex items-center gap-2 text-[9px] font-black uppercase ${replyingToId === msg.id ? 'bg-yellow-400 text-black' : 'bg-white/5 text-white/40 hover:bg-white/10 hover:text-white'}`}
-                                                    >
-                                                        <MessageSquare size={12} />
-                                                        {replyingToId === msg.id ? 'Cancel' : 'Responder'}
-                                                    </button>
-                                                )}
-
-                                                {!msg.read && msg.direction !== 'outbound' && (
-                                                    <button
-                                                        onClick={() => handleMarkAsRead(msg.id)}
-                                                        className="px-4 py-2 bg-yellow-400 text-black text-[9px] font-black uppercase rounded-lg active:scale-95 transition-all"
-                                                    >
-                                                        Marcar como lida
-                                                    </button>
-                                                )}
+                                            <div className="flex gap-2">
                                                 <button
-                                                    onClick={async () => {
-                                                        if (confirm('Excluir mensagem?')) {
-                                                            await deleteSupportMessage(msg.id);
-                                                            await loadData();
+                                                    onClick={() => {
+                                                        setReplyingTo(msg);
+                                                        setReplyText('');
+                                                        setReplyLanguage(language); // Default to current view language
+                                                        if (!msg.read) {
+                                                            markMessageAsRead(msg.id);
+                                                            setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read: true } : m));
                                                         }
                                                     }}
-                                                    className="p-2 text-white/20 hover:text-red-500 transition-colors"
+                                                    className="p-3 bg-white text-black rounded-xl hover:bg-yellow-400 transition-all text-[10px] font-black uppercase flex items-center gap-2"
+                                                >
+                                                    <Mail size={14} /> {language === 'pt' ? 'RESPONDER' : 'REPLY'}
+                                                </button>
+                                                <button
+                                                    onClick={async () => {
+                                                        if (!confirm(language === 'pt' ? 'Excluir mensagem?' : 'Delete message?')) return;
+                                                        await deleteSupportMessage(msg.id);
+                                                        setMessages(prev => prev.filter(m => m.id !== msg.id));
+                                                    }}
+                                                    className="p-3 bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white rounded-xl transition-all"
                                                 >
                                                     <Trash2 size={16} />
                                                 </button>
                                             </div>
                                         </div>
-                                        <div className="bg-black/40 p-5 rounded-2xl border border-white/5">
+                                        <div className="p-4 bg-black/40 rounded-2xl border border-white/5">
                                             <p className="text-xs text-white/80 leading-relaxed whitespace-pre-wrap">{msg.message}</p>
                                         </div>
-
-                                        {/* Reply Area */}
-                                        {replyingToId === msg.id && (
-                                            <div className="mt-4 pt-4 border-t border-white/5 animate-in slide-in-from-top-2">
-                                                <div className="flex justify-between items-center mb-2">
-                                                    <div className="flex gap-2 items-center">
-                                                        <Mail size={12} className="text-yellow-400" />
-                                                        <span className="text-[10px] text-yellow-400 font-bold uppercase">Escrever Resposta (via Email)</span>
-                                                    </div>
-                                                    <div className="flex gap-2">
-                                                        <button
-                                                            onClick={() => setReplyLanguage('pt')}
-                                                            className={`text-[9px] font-black px-2 py-1 rounded transition-colors ${replyLanguage === 'pt' ? 'bg-yellow-400 text-black' : 'bg-white/10 text-white/40 hover:text-white'}`}
-                                                        >
-                                                            PT
-                                                        </button>
-                                                        <button
-                                                            onClick={() => setReplyLanguage('en')}
-                                                            className={`text-[9px] font-black px-2 py-1 rounded transition-colors ${replyLanguage === 'en' ? 'bg-blue-400 text-black' : 'bg-white/10 text-white/40 hover:text-white'}`}
-                                                        >
-                                                            EN
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <textarea
-                                                    value={replyText}
-                                                    onChange={e => setReplyText(e.target.value)}
-                                                    placeholder={replyLanguage === 'pt' ? `Escreva sua resposta para ${msg.name}...` : `Write your reply to ${msg.name}...`}
-                                                    className={`w-full bg-white/5 border rounded-xl p-4 text-xs text-white outline-none focus:border-yellow-400 min-h-[120px] mb-3 resize-y font-medium transition-colors ${replyLanguage === 'pt' ? 'border-white/10' : 'border-blue-400/30'}`}
-                                                    autoFocus
-                                                />
-                                                <div className="flex justify-end gap-3">
-                                                    <button
-                                                        onClick={() => setReplyingToId(null)}
-                                                        disabled={replyLoading}
-                                                        className="px-4 py-2 text-[10px] font-bold uppercase text-white/40 hover:text-white transition-colors"
-                                                    >
-                                                        Cancelar
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleSendReply(msg)}
-                                                        disabled={replyLoading || !replyText.trim()}
-                                                        className="px-6 py-3 bg-yellow-400 hover:bg-yellow-300 text-black text-[10px] font-black uppercase rounded-xl flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-yellow-400/10 active:scale-95 transition-all"
-                                                    >
-                                                        {replyLoading ? <Loader2 size={14} className="animate-spin" /> : <Mail size={14} />}
-                                                        Enviar Resposta
-                                                    </button>
-                                                </div>
-                                            </div>
+                                        {!msg.read && (
+                                            <button
+                                                onClick={async () => {
+                                                    await markMessageAsRead(msg.id);
+                                                    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, read: true } : m));
+                                                }}
+                                                className="self-end text-[9px] font-black uppercase text-yellow-400/50 hover:text-yellow-400 transition-colors"
+                                            >
+                                                MARCAR COMO LIDA
+                                            </button>
                                         )}
                                     </div>
                                 ))}
@@ -589,6 +524,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         )}
                     </div>
                 )}
+
 
                 {activeTab === 'ticker' && (
                     <div className="space-y-6">
@@ -1178,6 +1114,98 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                                 {editingAnnouncement ? 'Salvar Alterações' : 'Publicar no Ticker'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* Reply Modal */}
+            {replyingTo && (
+                <div className="fixed inset-0 z-[210] flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/95 backdrop-blur-md" onClick={() => setReplyingTo(null)}></div>
+                    <div className="relative w-full max-w-lg bg-zinc-900 border border-white/10 rounded-[40px] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
+                        <div className="p-8 pb-4 flex justify-between items-center border-b border-white/5">
+                            <div>
+                                <div className="flex items-center gap-4">
+                                    <h2 className="text-xl font-black uppercase tracking-tighter text-yellow-400">
+                                        {replyLanguage === 'pt' ? 'Responder Usuário' : 'Reply to User'}
+                                    </h2>
+                                    <div className="flex bg-white/5 p-1 rounded-lg border border-white/5">
+                                        <button
+                                            onClick={() => setReplyLanguage('pt')}
+                                            className={`px-3 py-1 rounded-md text-[9px] font-black transition-all ${replyLanguage === 'pt' ? 'bg-yellow-400 text-black' : 'text-white/40 hover:text-white'}`}
+                                        >
+                                            PT
+                                        </button>
+                                        <button
+                                            onClick={() => setReplyLanguage('en')}
+                                            className={`px-3 py-1 rounded-md text-[9px] font-black transition-all ${replyLanguage === 'en' ? 'bg-blue-400 text-black' : 'text-white/40 hover:text-white'}`}
+                                        >
+                                            EN
+                                        </button>
+                                    </div>
+                                </div>
+                                <p className="text-[10px] text-white/40 font-bold uppercase mt-1">Para: {replyingTo.name} ({replyingTo.email})</p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => setReplyingTo(null)}
+                                className="w-10 h-10 flex items-center justify-center rounded-full bg-white/5 hover:bg-white/10 text-white/40 hover:text-white transition-all active:scale-95"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <div className="p-8 space-y-6">
+                            <div className="bg-white/5 p-4 rounded-2xl border border-white/5 max-h-32 overflow-y-auto">
+                                <label className="text-[9px] font-black uppercase text-white/40 mb-2 block tracking-widest">Mensagem Original</label>
+                                <p className="text-[11px] text-white/60 italic">"{replyingTo.message}"</p>
+                            </div>
+
+                            <div className="space-y-4">
+                                <label className="text-[9px] font-black uppercase text-yellow-400 mb-2 block tracking-widest">Sua Resposta</label>
+                                <textarea
+                                    placeholder={language === 'pt' ? "Digite sua resposta aqui..." : "Type your response here..."}
+                                    value={replyText}
+                                    onChange={e => setReplyText(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl text-sm outline-none focus:border-yellow-400 h-40 resize-none font-medium placeholder:text-white/10"
+                                    required
+                                />
+                            </div>
+
+                            <button
+                                onClick={async () => {
+                                    if (!replyText.trim()) return;
+                                    setLoading(true);
+                                    try {
+                                        const success = await sendSupportReply(
+                                            replyingTo.id,
+                                            replyText,
+                                            replyingTo.email,
+                                            replyingTo.name,
+                                            replyingTo.user_id || '',
+                                            replyLanguage
+                                        );
+                                        if (success) {
+                                            alert(language === 'pt' ? 'Resposta enviada com sucesso!' : 'Response sent successfully!');
+                                            setReplyingTo(null);
+                                            setReplyText('');
+                                        } else {
+                                            alert(language === 'pt' ? 'Erro ao enviar resposta. Verifique o console.' : 'Error sending response. Check console.');
+                                        }
+                                    } catch (err) {
+                                        console.error('Reply error:', err);
+                                        alert('Erro fatal ao responder.');
+                                    } finally {
+                                        setLoading(false);
+                                    }
+                                }}
+                                disabled={loading || !replyText.trim()}
+                                className="w-full py-5 bg-yellow-400 text-black font-black uppercase tracking-widest rounded-2xl hover:bg-yellow-300 active:scale-98 transition-all flex items-center justify-center gap-3 disabled:opacity-50 shadow-xl shadow-yellow-400/10"
+                            >
+                                {loading ? <Loader2 className="animate-spin" size={20} /> : <CheckCircle size={20} />}
+                                {language === 'pt' ? 'ENVIAR RESPOSTA' : 'SEND RESPONSE'}
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}

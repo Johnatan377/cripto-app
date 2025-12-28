@@ -16,7 +16,7 @@ import { canAddAlert, checkAlerts, playAlertSound, initAudio } from './services/
 import { getSavedAccount, signOut, mapSupabaseUser, getUserProfile, syncUserProfile, saveUserPortfolio, loadUserPortfolio, getUserIdByReferralCode } from './services/authService';
 import AlertManagerModal from './components/AlertManagerModal';
 import { fetchTickerAnnouncements } from './services/tickerService';
-import { fetchSupportMessages } from './services/messageService';
+// import { fetchSupportMessages } from './services/messageService';
 
 import { INITIAL_PORTFOLIO_ITEMS, TRANSLATIONS, THEME_STYLES, STRIPE_PROMO_MONTHLY_LINK, STRIPE_FULL_PRICE_LINK, TICKER_COINS, ADMIN_EMAILS } from './constants';
 import { supabase } from './services/supabaseClient';
@@ -643,7 +643,8 @@ const App: React.FC = () => {
         const currentSettings = settingsRef.current;
         const mergedSettings = {
           ...currentSettings,
-          tier: profileData.tier || currentSettings.tier,
+          // Critical: Always prefer Cloud Tier if valid, otherwise keep existing (don't default to Free easily)
+          tier: (profileData.tier && profileData.tier !== 'free') ? profileData.tier : currentSettings.tier,
           theme: profileData.theme || currentSettings.theme,
           currency: profileData.currency || currentSettings.currency,
           language: profileData.language || currentSettings.language,
@@ -741,10 +742,31 @@ const App: React.FC = () => {
               });
 
               // Also skip if data is identical to local
-              if (newDataHash === lastSyncHash.current) return;
+              if (newDataHash === lastSyncHash.current) {
+                // Check if Tier or Role changed independently (e.g. from Admin Panel or Stripe)
+                if (newData.tier && newData.tier !== settingsRef.current.tier) {
+                  console.log("[Realtime] Tier updated remotely:", newData.tier);
+                  setSettings(s => ({ ...s, tier: newData.tier }));
+                }
+                if (newData.role && userAccountRef.current && newData.role !== userAccountRef.current.role) {
+                  console.log("[Realtime] Role updated remotely:", newData.role);
+                  setUserAccount(prev => prev ? { ...prev, role: newData.role } : null);
+                }
+                return;
+              }
 
               console.log("[Realtime] Profile updated remotely");
               lastSyncHash.current = newDataHash;
+
+              // Update Tier if different
+              if (newData.tier && newData.tier !== settingsRef.current.tier) {
+                setSettings(s => ({ ...s, tier: newData.tier }));
+              }
+
+              // Update Role if different
+              if (newData.role && userAccountRef.current && newData.role !== userAccountRef.current.role) {
+                setUserAccount(prev => prev ? { ...prev, role: newData.role } : null);
+              }
 
               if (newData.portfolio) setPortfolioItems(newData.portfolio);
               if (newData.allocations) {
@@ -804,6 +826,8 @@ const App: React.FC = () => {
   const prevUnreadCount = useRef(0);
 
   // Support Messages Notification (Admin Polling)
+  // Support Messages Notification REMOVED
+  /*
   useEffect(() => {
     if (userAccount?.role !== 'admin') {
       setUnreadSupportCount(0);
@@ -834,6 +858,7 @@ const App: React.FC = () => {
     const interval = setInterval(loadUnreadCount, 30000); // Check every 30s
     return () => clearInterval(interval);
   }, [userAccount?.role, currentView]);
+  */
 
   // Request Notification Permission
   useEffect(() => {
@@ -1027,25 +1052,33 @@ const App: React.FC = () => {
     }
 
     if (params.get('success') === 'true') {
-      const newSettings: UserSettings = {
-        ...settings,
-        tier: 'premium',
-        subscription_source: 'stripe',
-        subscription_active_since: new Date().toISOString()
+      const activateStripePremium = async () => {
+        const currentTier = settingsRef.current.tier;
+        if (currentTier === 'premium') return; // Avoid redundant updates
+
+        const newSettings: UserSettings = {
+          ...settingsRef.current,
+          tier: 'premium',
+          subscription_source: 'stripe',
+          subscription_active_since: new Date().toISOString()
+        };
+
+        setSettings(newSettings);
+        localStorage.setItem('settings', JSON.stringify(newSettings));
+
+        // Update cloud if logged in
+        if (userAccountRef.current?.id) {
+          await syncUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
+        }
+
+        // Clean URL
+        window.history.replaceState({}, '', window.location.pathname);
+        alert('Pagamento confirmado! Premium ativado com sucesso. 🚀');
       };
 
-      setSettings(newSettings);
-
-      // Update cloud if logged in (user should be logged in to pay, but check just in case)
-      if (userAccount?.id) {
-        syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role);
-      }
-
-      // Clean URL
-      window.history.replaceState({}, '', window.location.pathname);
-      alert('Pagamento confirmado! Premium ativado com sucesso. 🚀');
+      activateStripePremium();
     }
-  }, [settings, userAccount]);
+  }, []); // Run only once on mount
 
   // AUDIO UNLOCK FOR MOBILE
   useEffect(() => {
@@ -1879,18 +1912,20 @@ const App: React.FC = () => {
                 if (data && !error) {
                   // Update Local State
                   const newSettings: UserSettings = {
-                    ...settings,
+                    ...settingsRef.current,
                     tier: 'premium',
                     subscription_source: 'promo_code',
                     promo_code_used: cleanCode,
                     subscription_active_since: new Date().toISOString()
                   };
+
                   setSettings(newSettings);
+                  localStorage.setItem('settings', JSON.stringify(newSettings));
                   localStorage.setItem('promo_redeemed', 'true');
 
                   // Update Cloud Profile if logged in
-                  if (userAccount?.id) {
-                    await syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role);
+                  if (userAccountRef.current?.id) {
+                    await syncUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
                   }
 
                   alert('JOGADOR VIP DETECTADO! ACESSO LIBERADO. 🚀');

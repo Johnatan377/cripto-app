@@ -464,8 +464,5 @@ export const THEME_STYLES: Record<AppTheme, ThemeStyle> = {
 };
 
 export const ADMIN_EMAILS = [
-  'johnatannogueira377@gmail.com',
-  'nogujohnogueira@gmail.com',
-  'johnatannogueira26@gmail.com',
-  'criativosgeniais@gmail.com'
+  'cryptofolio.defi@gmail.com'
 ];

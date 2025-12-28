@@ -43,6 +43,7 @@ export const getAirdropById = async (id: string): Promise<AirdropProject | null>
 
 export const createAirdrop = async (project: Omit<AirdropProject, 'id' | 'created_at'>): Promise<AirdropProject | null> => {
     try {
+        console.log("AdminView: Attempting to create airdrop with payload:", project);
         const { data, error } = await supabase
             .from('airdrops')
             .insert(project)
@@ -50,13 +51,21 @@ export const createAirdrop = async (project: Omit<AirdropProject, 'id' | 'create
             .single();
 
         if (error) {
-            console.error('Error creating airdrop:', error);
+            console.error('Error creating airdrop (Supabase):', error);
+            console.error('Error Details:', {
+                message: error.message,
+                details: error.details,
+                hint: error.hint,
+                code: error.code
+            });
             return null;
         }
 
+        console.log("AdminView: Airdrop created successfully:", data);
         return data as AirdropProject;
-    } catch (err) {
-        console.error('Unexpected error creating airdrop:', err);
+    } catch (err: any) {
+        console.error('Unexpected error creating airdrop (Network/Code):', err);
+        if (err?.message) console.error("Error Message:", err.message);
         return null;
     }
 };
