@@ -4,19 +4,21 @@ import { AirdropProject } from '../types';
 
 export const fetchAirdrops = async (): Promise<AirdropProject[]> => {
     try {
-        const { data, error } = await supabase
+        console.log("airdropService: Fetching airdrops...");
+        const { data, error, status, statusText } = await supabase
             .from('airdrops')
             .select('*')
             .order('created_at', { ascending: false });
 
         if (error) {
-            console.error('Error fetching airdrops:', error);
+            console.error('airdropService: Supabase Error:', { error, status, statusText });
             return [];
         }
 
+        console.log(`airdropService: Successfully fetched ${data?.length || 0} airdrops.`);
         return data as AirdropProject[];
     } catch (err) {
-        console.error('Unexpected error fetching airdrops:', err);
+        console.error('airdropService: Unexpected error:', err);
         return [];
     }
 };

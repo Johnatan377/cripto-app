@@ -45,13 +45,18 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
                 timeoutPromise
             ]) as AirdropProject[];
 
-            console.log("AirdropScreen: Airdrops carregados:", data?.length);
+            if (!data || data.length === 0) {
+                console.warn("AirdropScreen: Nenhum dado retornado ou array vazio do Supabase.");
+            } else {
+                console.log("AirdropScreen: Projetos carregados com sucesso:", data.length);
+            }
+
             setProjects(data || []);
         } catch (e: any) {
-            console.error("AirdropScreen: Erro:", e);
+            console.error("AirdropScreen: Falha ao carregar projetos:", e);
             setErrorMsg(language === 'pt'
-                ? 'Erro ao carregar ou tempo limite excedido. Tente recarregar.'
-                : 'Error loading or timeout. Try refreshing.');
+                ? `Erro: ${e.message || 'Tempo limite excedido'}. Verifique se o banco de dados está online e tente recarregar.`
+                : `Error: ${e.message || 'Timeout'}. Verify if the database is online and try refreshing.`);
         } finally {
             setLoading(false);
         }
