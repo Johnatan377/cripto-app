@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect } from 'react';
-import { fetchAirdrops } from '../services/airdropService';
+import { fetchAirdrops, getCachedAirdrops } from '../services/airdropService';
 import { AirdropProject } from '../types';
 import AirdropCard from './AirdropCard';
 import AirdropDetails from './AirdropDetails';
@@ -16,8 +16,8 @@ interface AirdropScreenProps {
 const CATEGORIES = ['Todos', 'DeFi', 'Testnet', 'GameFi', 'L2', 'Stable Coin', 'PerpDex'];
 
 const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremium, onTriggerPremium }) => {
-    const [projects, setProjects] = useState<AirdropProject[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [projects, setProjects] = useState<AirdropProject[]>(() => getCachedAirdrops());
+    const [loading, setLoading] = useState(projects.length === 0);
     const [selectedProject, setSelectedProject] = useState<AirdropProject | null>(null);
     const [filter, setFilter] = useState('Todos');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -27,8 +27,7 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
     }, []);
 
     const loadProjects = async () => {
-        setLoading(true);
-        setProjects([]);
+        if (projects.length === 0) setLoading(true);
         setErrorMsg(null);
 
         console.log("AirdropScreen: Iniciando busca de airdrops...");

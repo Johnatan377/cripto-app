@@ -2,6 +2,16 @@
 import { supabase } from './supabaseClient';
 import { AirdropProject } from '../types';
 
+export const getCachedAirdrops = (): AirdropProject[] => {
+    try {
+        const cached = localStorage.getItem('cached_airdrops');
+        return cached ? JSON.parse(cached) : [];
+    } catch (e) {
+        console.error("airdropService: Error reading cache", e);
+        return [];
+    }
+};
+
 export const fetchAirdrops = async (): Promise<AirdropProject[]> => {
     try {
         console.log("airdropService: Fetching airdrops...");
@@ -15,7 +25,11 @@ export const fetchAirdrops = async (): Promise<AirdropProject[]> => {
             return [];
         }
 
-        console.log(`airdropService: Successfully fetched ${data?.length || 0} airdrops.`);
+        if (data) {
+            console.log(`airdropService: Successfully fetched ${data.length} airdrops. Updating cache.`);
+            localStorage.setItem('cached_airdrops', JSON.stringify(data));
+        }
+
         return data as AirdropProject[];
     } catch (err) {
         console.error('airdropService: Unexpected error:', err);
