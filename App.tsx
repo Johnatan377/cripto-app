@@ -1048,7 +1048,7 @@ const App: React.FC = () => {
       // Initialize shared AudioContext on first user gesture
       initAudio();
       // Play a very subtle tone to confirm unlock and prime the system
-      playAlertSound(0.005);
+      playAlertSound(0, 1);
       window.removeEventListener('click', unlock);
       window.removeEventListener('touchstart', unlock);
       console.log("[Audio] System unlocked by user gesture");
