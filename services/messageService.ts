@@ -77,13 +77,13 @@ export const deleteSupportMessage = async (id: string) => {
     }
 };
 
-export const sendSupportReply = async (originalMessageId: string, replyMessage: string, userEmail: string, userName: string, language: 'pt' | 'en' = 'pt') => {
+export const sendSupportReply = async (originalMessageId: string, replyMessage: string, userEmail: string, userName: string, userId: string, language: 'pt' | 'en' = 'pt') => {
     try {
         // 1. Insert Reply Record
         const { error: dbError } = await supabase
             .from('support_messages')
             .insert({
-                user_id: (await supabase.auth.getUser()).data.user?.id,
+                user_id: userId,
                 name: 'Suporte CryptoFolio',
                 email: 'support@cryptofoliodefi.xyz',
                 message: replyMessage,

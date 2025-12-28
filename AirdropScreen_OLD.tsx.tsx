@@ -31,27 +31,13 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
         setProjects([]);
         setErrorMsg(null);
 
-        console.log("AirdropScreen: Iniciando busca de airdrops...");
 
         try {
-            // Timeout promise de 15 segundos
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout ao carregar airdrops')), 15000)
-            );
-
-            // Race entre o fetch e o timeout
-            const data = await Promise.race([
-                fetchAirdrops(),
-                timeoutPromise
-            ]) as AirdropProject[];
-
-            console.log("AirdropScreen: Airdrops carregados:", data?.length);
-            setProjects(data || []);
-        } catch (e: any) {
-            console.error("AirdropScreen: Erro:", e);
-            setErrorMsg(language === 'pt'
-                ? 'Erro ao carregar ou tempo limite excedido. Tente recarregar.'
-                : 'Error loading or timeout. Try refreshing.');
+            const data = await fetchAirdrops();
+            setProjects(data);
+        } catch (e) {
+            console.error(e);
+            setErrorMsg('Erro ao carregar.');
         } finally {
             setLoading(false);
         }

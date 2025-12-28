@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     LayoutDashboard, Plus, Trash2, Edit2, MessageSquare,
     CheckCircle, X, Search, Mail, User, Clock,
@@ -11,20 +11,26 @@ import { fetchTickerAnnouncements, createTickerAnnouncement, updateTickerAnnounc
 import { fetchAdminStats, AdminStats } from '../services/adminService';
 import { AirdropProject, AirdropStep, TickerAnnouncement } from '../types';
 import { sendSupportMessage, fetchSupportMessages, markMessageAsRead, deleteSupportMessage, SupportMessage, sendSupportReply } from '../services/messageService';
+import { supabase } from '../services/supabaseClient';
 
 interface AdminViewProps {
     language: 'pt' | 'en';
+    userAccount: any;
 }
 
 const CATEGORIES = ['DeFi', 'Testnet', 'GameFi', 'L2', 'Stable Coin', 'PerpDex', 'Node', 'Outros'];
 
-const AdminView: React.FC<AdminViewProps> = ({ language }) => {
+const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
     const [activeTab, setActiveTab] = useState<'airdrops' | 'messages' | 'ticker' | 'stats'>('airdrops');
     const [airdrops, setAirdrops] = useState<AirdropProject[]>([]);
     const [messages, setMessages] = useState<SupportMessage[]>([]);
     const [announcements, setAnnouncements] = useState<TickerAnnouncement[]>([]);
     const [stats, setStats] = useState<AdminStats | null>(null);
     const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const loadingRef = useRef(true);
+    const timeoutRef = useRef<any>(null);
+    const abortControllerRef = useRef<AbortController | null>(null);
 
 
     // Reply State
@@ -106,38 +112,127 @@ const AdminView: React.FC<AdminViewProps> = ({ language }) => {
         }
     }, [editingAirdrop, isAirdropModalOpen]);
 
+    const [isMounted, setIsMounted] = useState(false);
+
     useEffect(() => {
-        loadData();
-    }, [activeTab]);
+        // Delay mounting data fetch by 100ms to allow parent session to stabilize
+        const t = setTimeout(() => setIsMounted(true), 100);
+        return () => clearTimeout(t);
+    }, []);
+
+    useEffect(() => {
+        if (isMounted) {
+            loadData();
+        }
+        return () => {
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+            }
+        };
+    }, [activeTab, isMounted]);
 
     const loadData = async () => {
-        // Fallback safety timeout (10 seconds)
-        const safetyTimeout = setTimeout(() => {
-            if (loading) {
-                console.warn('AdminView: loadData safety timeout reached');
+        if (!userAccount) {
+            console.warn("AdminView: No userAccount in props, skipping fetch");
+            return;
+        }
+
+        console.log(`AdminView: Starting loadData for [${activeTab}] (User: ${userAccount.email})`);
+        // Abort previous requests if they exist
+        if (abortControllerRef.current) {
+            console.log(`AdminView: Aborting previous fetch for [${activeTab}]`);
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
+
+        setLoading(true);
+        loadingRef.current = true;
+        setError(null);
+
+        // Increased Fallback safety timeout (20 seconds) for stability
+        timeoutRef.current = setTimeout(() => {
+            if (loadingRef.current) {
+                console.warn(`AdminView: loadData timeout hit for [${activeTab}]`);
                 setLoading(false);
+                loadingRef.current = false;
+                setError(language === 'pt'
+                    ? 'A conexão com o servidor está lenta. Tente recarregar ou verifique sua internet.'
+                    : 'Server connection is slow. Try refreshing or check your internet.');
             }
-        }, 10000);
+        }, 20000);
 
         try {
-            if (activeTab === 'airdrops') {
-                const data = await fetchAirdrops();
-                setAirdrops(data || []);
-            } else if (activeTab === 'messages') {
-                const data = await fetchSupportMessages();
-                setMessages(data || []);
-            } else if (activeTab === 'ticker') {
-                const data = await fetchTickerAnnouncements();
-                setAnnouncements(data || []);
-            } else if (activeTab === 'stats') {
-                const data = await fetchAdminStats();
-                setStats(data);
+            console.log(`AdminView: Parallel fetching starting...`);
+
+            // Helper to wrap each fetcher with an individual timeout
+            const withTimeout = async (promise: Promise<any>, name: string) => {
+                const timeout = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error(`Timeout fetching ${name}`)), 15000)
+                );
+                try {
+                    console.log(`AdminView: [Fetcher] ${name} starting...`);
+                    const result = await Promise.race([promise, timeout]);
+                    console.log(`AdminView: [Fetcher] ${name} done`);
+                    return result;
+                } catch (e: any) {
+                    console.warn(`AdminView: [Fetcher] ${name} failed/timed out:`, e.message);
+                    return { data: null, error: e };
+                }
+            };
+
+            const fetchers = [
+                activeTab === 'airdrops' ? withTimeout(supabase.from('airdrops').select('*').order('created_at', { ascending: false }).abortSignal(abortControllerRef.current.signal), 'Airdrops') : Promise.resolve({ data: null }),
+                activeTab === 'messages' ? withTimeout(fetchSupportMessages(), 'Messages') : Promise.resolve(null),
+                activeTab === 'ticker' ? withTimeout(fetchTickerAnnouncements(), 'Ticker') : Promise.resolve(null),
+                withTimeout(fetchAdminStats(), 'Stats')
+            ];
+
+            const results = await Promise.allSettled(fetchers);
+            console.log("AdminView: Results received:", results.map(r => r.status));
+
+            // 1. Airdrops
+            const airdropsResult = results[0];
+            if (airdropsResult.status === 'fulfilled' && airdropsResult.value?.data) {
+                setAirdrops(airdropsResult.value.data);
+                console.log(`AdminView: ${airdropsResult.value.data.length} airdrops loaded`);
+            } else if (airdropsResult.status === 'rejected') {
+                console.error("Airdrops fetch rejected:", airdropsResult.reason);
             }
-        } catch (error) {
-            console.error('AdminView: Error loading data:', error);
+
+            // 2. Messages
+            const messagesResult = results[1];
+            if (messagesResult.status === 'fulfilled' && messagesResult.value) {
+                setMessages(messagesResult.value);
+            }
+
+            // 3. Ticker
+            const tickerResult = results[2];
+            if (tickerResult.status === 'fulfilled' && tickerResult.value) {
+                setAnnouncements(tickerResult.value);
+            }
+
+            // 4. Stats
+            const statsResult = results[3];
+            if (statsResult.status === 'fulfilled' && statsResult.value) {
+                setStats(statsResult.value);
+            }
+
+
+        } catch (err: any) {
+            console.error('AdminView: Global error in loadData:', err);
+            setError(language === 'pt' ? 'Erro inesperado: ' + (err.message || 'Verifique o console') : 'Unexpected error: ' + (err.message || 'Check console'));
         } finally {
-            clearTimeout(safetyTimeout);
+            if (timeoutRef.current) {
+                clearTimeout(timeoutRef.current);
+                timeoutRef.current = null;
+            }
+            if (abortControllerRef.current) {
+                abortControllerRef.current = null;
+            }
             setLoading(false);
+            loadingRef.current = false;
+            console.log(`AdminView: loadData cycle finished for [${activeTab}]`);
         }
     };
 
@@ -203,7 +298,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language }) => {
     const handleSendReply = async (msg: SupportMessage) => {
         if (!replyText.trim()) return;
         setReplyLoading(true);
-        const success = await sendSupportReply(msg.id, replyText, msg.email, msg.name, replyLanguage);
+        const success = await sendSupportReply(msg.id, replyText, msg.email, msg.name, userAccount.id, replyLanguage);
         if (success) {
             alert('Resposta enviada com sucesso! (Email disparado)');
             setReplyingToId(null);
@@ -316,6 +411,17 @@ const AdminView: React.FC<AdminViewProps> = ({ language }) => {
 
                         {loading ? (
                             <div className="flex justify-center py-20"><Loader2 className="animate-spin text-yellow-400" size={40} /></div>
+                        ) : error ? (
+                            <div className="text-center py-20 text-rose-500 uppercase font-black text-xs tracking-widest border border-rose-500/20 bg-rose-500/5 rounded-3xl p-8">
+                                <AlertTriangle size={32} className="mx-auto mb-4 opacity-50" />
+                                <p>Erro ao carregar dados</p>
+                                <p className="text-[10px] opacity-60 mt-2 lowercase">{error}</p>
+                                <button onClick={loadData} className="mt-4 px-4 py-2 bg-rose-500/20 rounded-lg hover:bg-rose-500/30 transition-all">Tentar Novamente</button>
+                            </div>
+                        ) : airdrops.length === 0 ? (
+                            <div className="text-center py-20 text-white/20 uppercase font-bold text-xs tracking-widest border-2 border-dashed border-white/5 rounded-[40px]">
+                                Nenhum resultado encontrado
+                            </div>
                         ) : (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                 {airdrops.map(airdrop => (

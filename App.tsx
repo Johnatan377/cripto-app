@@ -18,7 +18,7 @@ import AlertManagerModal from './components/AlertManagerModal';
 import { fetchTickerAnnouncements } from './services/tickerService';
 import { fetchSupportMessages } from './services/messageService';
 
-import { INITIAL_PORTFOLIO_ITEMS, TRANSLATIONS, THEME_STYLES, STRIPE_PROMO_MONTHLY_LINK, STRIPE_FULL_PRICE_LINK, TICKER_COINS } from './constants';
+import { INITIAL_PORTFOLIO_ITEMS, TRANSLATIONS, THEME_STYLES, STRIPE_PROMO_MONTHLY_LINK, STRIPE_FULL_PRICE_LINK, TICKER_COINS, ADMIN_EMAILS } from './constants';
 import { supabase } from './services/supabaseClient';
 import PortfolioPieChart from './components/PortfolioPieChart';
 import AssetList from './components/AssetList';
@@ -464,7 +464,7 @@ const ManageSubscriptionModal = ({ isOpen, onClose, onCancelSubscription }: { is
       } else {
         throw new Error('Url não encontrada');
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Portal Error:', err);
       alert('Erro ao abrir portal: ' + (err.message || 'Tente novamente.'));
       // Fallback manual se falhar (ex: webhook não salvou ID ainda)
@@ -624,25 +624,21 @@ const App: React.FC = () => {
       }
 
       if (profileData) {
-        setUserAccount(prev => prev ? { ...prev, role: profileData.role } : null);
+        // SECURITY: Ensure Admin status for whitelisted emails is enforced on every login
+        const email = session.user.email;
+        const isAdminEmail = email && ADMIN_EMAILS.includes(email.toLowerCase());
+        let currentRole = profileData.role || 'user';
 
-        // Merge settings
-        setSettings(prev => {
-          const newSettings = {
-            ...prev,
-            tier: profileData.tier || prev.tier,
-            theme: profileData.theme || prev.theme,
-            currency: profileData.currency || prev.currency,
-            language: profileData.language || prev.language,
-            referral_code: profileData.referral_code,
-            referred_by: profileData.referred_by
-          };
-          localStorage.setItem('settings', JSON.stringify(newSettings));
-          return newSettings;
-        });
+        if (isAdminEmail && currentRole !== 'admin') {
+          console.log(`[Auth] Enforcing Admin status for ${email}`);
+          await supabase.from('profiles').update({ role: 'admin' }).eq('id', userId);
+          currentRole = 'admin';
+        }
 
+        // Sync Account State
+        setUserAccount(prev => prev ? { ...prev, role: currentRole } : null);
 
-        // Always sync DB profile to local state (Critical for restoring Tier/Settings on login)
+        // Consolidate settings merge
         let referrerId: string | null = null;
         const currentSettings = settingsRef.current;
         const mergedSettings = {
@@ -651,10 +647,12 @@ const App: React.FC = () => {
           theme: profileData.theme || currentSettings.theme,
           currency: profileData.currency || currentSettings.currency,
           language: profileData.language || currentSettings.language,
-          referred_by: referrerId || profileData.referred_by,
-          referral_code: profileData.referral_code || currentSettings.referral_code // Ensure we have it
+          referred_by: profileData.referred_by || currentSettings.referred_by,
+          referral_code: profileData.referral_code || currentSettings.referral_code
         };
+
         setSettings(mergedSettings);
+        localStorage.setItem('settings', JSON.stringify(mergedSettings));
 
         // Handle Referral Logic (only if missing in DB)
         const storedRefCode = typeof window !== 'undefined' ? sessionStorage.getItem('referral_code') : null;
@@ -724,7 +722,7 @@ const App: React.FC = () => {
           .on(
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
-            (payload) => {
+            (payload: any) => {
               const newData = payload.new as any;
               if (!isCloudSyncInitDone.current) return;
 
@@ -762,7 +760,7 @@ const App: React.FC = () => {
 
     setupAuth();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       if (event === 'PASSWORD_RECOVERY') setIsRecoveryOpen(true);
 
       if (session?.user) {
@@ -1807,7 +1805,7 @@ const App: React.FC = () => {
             ) : currentView === 'support' ? (
               <SupportView language={settings.language} userAccount={userAccount} />
             ) : currentView === 'admin' ? (
-              <AdminView language={settings.language} />
+              <AdminView language={settings.language} userAccount={userAccount} />
             ) : (
               <AllocationTypeView
                 key={userAccount ? userAccount.email : 'guest'} // Force re-mount on user change

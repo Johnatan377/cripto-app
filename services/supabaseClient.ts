@@ -2,7 +2,9 @@
 import { createClient } from '@supabase/supabase-js';
 
 // No ambiente de desenvolvimento (Vite), usamos import.meta.env
+// @ts-ignore
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+// @ts-ignore
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 // Mock para evitar crash caso as chaves não existam
@@ -51,4 +53,6 @@ export const supabase = (supabaseUrl && supabaseAnonKey)
 
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn("Supabase: URL ou Anon Key ausentes. O app está rodando em modo offline/mock.");
+} else {
+  console.log("Supabase: Inicializado com URL:", supabaseUrl.substring(0, 20) + "...");
 }
