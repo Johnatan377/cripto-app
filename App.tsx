@@ -610,50 +610,33 @@ const App: React.FC = () => {
       });
 
       if (portfolioData) {
-        const cloudPortfolio = portfolioData.portfolio || [];
-        const cloudAllocations = portfolioData.allocations || [];
-        const cloudAlerts = portfolioData.alerts || [];
+        // 1. Update reference hash BEFORE updating state to block the "save back" effect
+        lastSyncHash.current = JSON.stringify({
+          portfolioItems: portfolioData.portfolio || [],
+          allocationLogs: portfolioData.allocations || [],
+          alerts: portfolioData.alerts || []
+        });
 
-        // SMART OVERWRITE PROTECTION:
-        // Se a nuvem estiver vazia mas o local tiver dados (indica que o usuário adicionou algo e deu refresh antes de salvar),
-        // preservamos o local para que o efeito de sync normal envie para a nuvem logo após.
-        const localPortfolio = portfolioItemsRef.current;
-        const localAllocations = allocationLogsRef.current;
-        const localAlerts = alertsRef.current;
-
-        const isCloudEmpty = cloudPortfolio.length === 0;
-        const isLocalPopulated = localPortfolio.length > 0;
-        const hasRecentLocalChange = (Date.now() - lastLocalChange.current) < 15000; // 15 seconds
-
-        if ((isCloudEmpty && isLocalPopulated) || hasRecentLocalChange) {
-          console.log("[Sync] Preserving local data due to empty cloud or recent local change.");
-        } else {
-          // Normal case: Cloud wins
-          if (portfolioData.portfolio) {
-            const mapped = cloudPortfolio.map((item: any) => ({
-              ...item,
-              localId: item.localId || `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-            }));
-            setPortfolioItems(mapped);
-          }
-          if (portfolioData.allocations) {
-            setAllocationLogs(cloudAllocations);
-            localStorage.setItem('allocation_mission_logs', JSON.stringify(cloudAllocations));
-          }
-          if (portfolioData.alerts) {
-            setAlerts(cloudAlerts);
-            localStorage.setItem('alerts', JSON.stringify(cloudAlerts));
+        // 2. Set states - WITH SAFETY CHECK
+        if (portfolioData.portfolio) {
+          const localStored = localStorage.getItem('portfolio');
+          const localItems = localStored ? JSON.parse(localStored) : [];
+          // If cloud has FEWER items than local, assume cloud is stale and don't overwrite
+          if (localItems.length > portfolioData.portfolio.length) {
+            console.log("[Sync] Local data has more items than cloud. preserving local.");
+            // Force a sync back to cloud (optional, but the useEffect will handle it eventually if we don't change state)
+          } else {
+            setPortfolioItems(portfolioData.portfolio);
           }
         }
-
-        // Atualizamos o hash de sincronização conforme o que veio da NUVEM.
-        // Se preservamos o local (isCloudEmpty && isLocalPopulated), o efeito de sync normal 
-        // em App.tsx perceberá que local != lastSyncHash e enviará os dados para a nuvem.
-        lastSyncHash.current = JSON.stringify({
-          portfolioItems: cloudPortfolio,
-          allocationLogs: cloudAllocations,
-          alerts: cloudAlerts
-        });
+        if (portfolioData.allocations) {
+          setAllocationLogs(portfolioData.allocations);
+          localStorage.setItem('allocation_mission_logs', JSON.stringify(portfolioData.allocations));
+        }
+        if (portfolioData.alerts) {
+          setAlerts(portfolioData.alerts);
+          localStorage.setItem('alerts', JSON.stringify(portfolioData.alerts));
+        }
       }
 
       if (profileData) {
@@ -933,12 +916,7 @@ const App: React.FC = () => {
 
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
     const saved = localStorage.getItem('portfolio');
-    const items = saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
-    // Map items to ensure they all have a localId
-    return items.map((item: any) => ({
-      ...item,
-      localId: item.localId || `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
-    }));
+    return saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
   });
 
   const [alerts, setAlerts] = useState<Alert[]>(() => {
@@ -957,20 +935,12 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : [];
   });
 
-  const portfolioItemsRef = useRef(portfolioItems);
-  useEffect(() => { portfolioItemsRef.current = portfolioItems; }, [portfolioItems]);
-  const allocationLogsRef = useRef(allocationLogs);
-  useEffect(() => { allocationLogsRef.current = allocationLogs; }, [allocationLogs]);
-  const alertsRef = useRef(alerts);
-  useEffect(() => { alertsRef.current = alerts; }, [alerts]);
-
 
   useEffect(() => {
     const currentHash = JSON.stringify({ portfolioItems, allocationLogs, alerts });
 
     // Always save to localStorage
     localStorage.setItem('portfolio', JSON.stringify(portfolioItems));
-    localStorage.setItem('allocation_mission_logs', JSON.stringify(allocationLogs));
     localStorage.setItem('alerts', JSON.stringify(alerts));
 
     if (userAccount?.id) {
@@ -1094,6 +1064,7 @@ const App: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
+  const [isMobileAppModalOpen, setIsMobileAppModalOpen] = useState(false);
   const [showReferralInfo, setShowReferralInfo] = useState(false);
   const SITE_URL = typeof window !== 'undefined' ? window.location.origin : 'https://seudominio.com';
 
@@ -1241,12 +1212,7 @@ const App: React.FC = () => {
       const currentVal = coin.current_price * item.quantity;
       const cost = (item.buyPrice || 0) * item.quantity;
       return {
-        ...coin,
-        localId: item.localId || item.assetId, // fallback should not be needed but safe
-        id: item.assetId,
-        name: item.name || item.assetId,
-        quantity: item.quantity,
-        buyPrice: item.buyPrice || 0,
+        ...coin, id: item.assetId, name: item.name || item.assetId, quantity: item.quantity, buyPrice: item.buyPrice || 0,
         totalValue: currentVal, totalCost: cost, pnlValue: currentVal - cost,
         pnlPercentage: cost > 0 ? ((currentVal - cost) / cost) * 100 : 0,
         allocation: totalVal > 0 ? (currentVal / totalVal) * 100 : 0
@@ -1258,27 +1224,20 @@ const App: React.FC = () => {
 
   const handleAddAsset = (e: React.FormEvent) => {
     e.preventDefault();
-    if (settings.tier === 'free' && portfolioItems.length >= 3) {
-      setShowPremiumBanner(true);
-      return;
-    }
+    // Limit Removed as per user request to fix "disappearing coins" issue
+    // if (settings.tier === 'free' && portfolioItems.length >= 3) {
+    //   setShowPremiumBanner(true);
+    //   return;
+    // }
     if (!selectedCoin || !newAssetAmount) return;
     const qty = parseFormattedNumber(newAssetAmount);
     const bp = parseFormattedNumber(newAssetBuyPrice);
-    const localId = `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    setPortfolioItems(prev => [...prev, {
-      localId,
-      assetId: selectedCoin.id,
-      quantity: qty,
-      buyPrice: bp,
-      name: selectedCoin.name,
-      image: selectedCoin.thumb
-    }]);
+    setPortfolioItems(prev => [...prev, { assetId: selectedCoin.id, quantity: qty, buyPrice: bp, name: selectedCoin.name, image: selectedCoin.thumb }]);
     setIsAddModalOpen(false); setNewAssetAmount(''); setNewAssetBuyPrice(''); setSelectedCoin(null); setSearchQuery('');
   };
 
   const handleEditAsset = (asset: PortfolioData) => {
-    setEditingAssetId(asset.localId || asset.id);
+    setEditingAssetId(asset.id);
     setNewAssetAmount(asset.quantity.toString());
     setNewAssetBuyPrice(asset.buyPrice.toString());
     setSelectedCoin({
@@ -1297,7 +1256,7 @@ const App: React.FC = () => {
     const bp = parseFormattedNumber(newAssetBuyPrice);
 
     setPortfolioItems(prev => prev.map(item => {
-      if (item.localId === editingAssetId) {
+      if (item.assetId === editingAssetId) {
         return { ...item, quantity: qty, buyPrice: bp };
       }
       return item;
@@ -1322,12 +1281,8 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRemoveAsset = (localId: string) => {
-    console.log("Removing asset with localId:", localId);
-    setPortfolioItems(prev => prev.filter(p => {
-      const pId = p.localId || p.assetId;
-      return pId !== localId;
-    }));
+  const handleRemoveAsset = (id: string) => {
+    setPortfolioItems(prev => prev.filter(p => p.assetId !== id));
   };
 
   const handleLogout = async () => {
@@ -1383,7 +1338,14 @@ const App: React.FC = () => {
         <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
           {!['airdrops', 'allocation', 'report'].includes(currentView) && (
             <>
+              {settings.theme === 'game' && <GameBackground />}
               {settings.theme === 'matrix' && <MatrixBackground />}
+              {settings.theme === 'neon' && <NeonBackground />}
+              {settings.theme === 'dracula' && <SpaceInvadersBackground />}
+              {settings.theme === 'tetris' && <TetrisBackground />}
+              {(['sunset', 'ocean', 'forest', 'purple', 'gold', 'yellow']).includes(settings.theme) && (
+                <div className={`absolute inset-0 opacity-[0.08] bg-gradient-to-br ${styles.gradient}`}></div>
+              )}
             </>
           )}
         </div>
@@ -1438,6 +1400,16 @@ const App: React.FC = () => {
               <button onClick={() => { setCurrentView('airdrops'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'airdrops' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><span className="text-xl">🪂</span> Airdrop</button>
               <button onClick={() => { setCurrentView('report'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'report' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><FileText size={22} /> {TRANSLATIONS[settings.language].menu.report}</button>
 
+              <button
+                onClick={() => setIsMobileAppModalOpen(true)}
+                className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all text-white/40 hover:text-white`}
+              >
+                <div className="relative">
+                  <Smartphone size={22} />
+                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
+                </div>
+                {TRANSLATIONS[settings.language].menu.mobile_app}
+              </button>
 
               <button onClick={() => setSidebarTab(sidebarTab?.startsWith('settings') ? null : 'settings')} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${sidebarTab?.startsWith('settings') ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}>
                 <Settings size={22} /> {TRANSLATIONS[settings.language].menu.settings}
@@ -1450,7 +1422,8 @@ const App: React.FC = () => {
                   </button>
                   {sidebarTab === 'settings-themes' && (
                     <div className="grid grid-cols-2 gap-2 p-2 bg-white/5 rounded-xl ml-4">
-                      {(Object.keys(THEME_STYLES) as AppTheme[]).map(t => (
+                      {/* Filter themes to only: OLED (black), Light (white), Yellow, Matrix */}
+                      {(['black', 'white', 'yellow', 'matrix'] as AppTheme[]).map(t => (
                         <button key={t} onClick={() => { setSettings(s => { const newSettings = { ...s, theme: t }; if (userAccount?.id) syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
                       ))}
                     </div>
@@ -1632,6 +1605,105 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex-1 flex flex-col h-full relative overflow-hidden">
+          <header className="px-6 pt-6 flex items-center justify-between relative z-50 shrink-0 bg-black">
+            <div className="flex items-center gap-2">
+              <button onClick={() => setIsSidebarOpen(true)} className={`p-2 transition-colors text-yellow-400 hover:text-yellow-300 md:hidden`}><Menu size={24} /></button>
+
+              {/* X Social Link Removed */}
+            </div>
+
+
+
+            <div className="flex items-center gap-4">
+              {/* Premium Badge (Desktop Only) */}
+              {settings.tier === 'premium' ? (
+                <div
+                  className="hidden md:flex items-center gap-3 px-4 py-2 bg-green-500/10 border border-green-500/20 rounded-xl shadow-[0_0_15px_rgba(34,197,94,0.1)] transition-all hover:bg-green-500/20"
+                >
+                  <div className="flex items-center gap-2">
+                    <Zap size={14} className="text-green-500 fill-green-500 animate-pulse" />
+                    <span className="text-[10px] font-black text-green-500 uppercase tracking-widest">{TRANSLATIONS[settings.language].menu.premium_active}</span>
+                  </div>
+                  <div className="w-[1px] h-3 bg-green-500/20" />
+                  <button
+                    onClick={() => setIsManageSubscriptionOpen(true)}
+                    className="text-[9px] font-bold text-green-400/60 hover:text-green-400 uppercase tracking-tighter transition-colors"
+                  >
+                    {TRANSLATIONS[settings.language].menu.manage}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowPremiumBanner(true)}
+                  className="hidden md:flex items-center gap-2 px-4 py-2 bg-yellow-400 text-black rounded-xl font-black text-[10px] uppercase tracking-widest animate-pulse shadow-[0_0_20px_rgba(250,204,21,0.4)] hover:scale-105 transition-transform"
+                >
+                  <Zap size={14} className="fill-black" />
+                  {TRANSLATIONS[settings.language].menu.be_premium}
+                </button>
+              )}
+
+              <div className="flex items-center gap-2">
+
+                {/* Language (Desktop Only) */}
+                <div className="relative hidden md:block">
+                  <button
+                    onClick={() => setIsLanguageMenuOpen(!isLanguageMenuOpen)}
+                    className={`p-2 transition-colors text-yellow-400 hover:text-yellow-300`}
+                    title={TRANSLATIONS[settings.language].general.settings}
+                  >
+                    <Globe size={20} />
+                  </button>
+
+                  {isLanguageMenuOpen && (
+                    <div className="absolute top-full right-0 mt-2 w-40 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl py-2 z-[200] animate-in slide-in-from-top-2 duration-200">
+                      <button
+                        onClick={() => {
+                          setSettings(s => {
+                            const newSettings: UserSettings = { ...s, language: 'pt' };
+                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
+                            return newSettings;
+                          });
+                          setIsLanguageMenuOpen(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'pt' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center text-[8px] text-white">BR</span>
+                        PT
+                      </button>
+                      <button
+                        onClick={() => {
+                          setSettings(s => {
+                            const newSettings: UserSettings = { ...s, language: 'en' };
+                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
+                            return newSettings;
+                          });
+                          setIsLanguageMenuOpen(false);
+                        }}
+                        className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'en' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
+                      >
+                        <span className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-[8px] text-white">US</span>
+                        EN
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => setSettings(s => ({ ...s, privacyMode: !s.privacyMode }))}
+                  className={`p-2 transition-colors text-yellow-400 hover:text-yellow-300 ${currentView === 'allocation' ? 'hidden md:block' : 'block'}`}
+                >
+                  {settings.privacyMode ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+                <button
+                  onClick={loadData}
+                  className={`p-2 transition-all active:rotate-180 text-yellow-400 hover:text-yellow-300 ${loadingState === LoadingState.LOADING ? 'animate-spin' : ''} ${currentView === 'allocation' ? 'hidden md:block' : 'block'}`}
+                >
+                  <RefreshCcw size={20} />
+                </button>
+              </div>
+            </div>
+          </header>
+
           {/* Top Black Bar (Desktop & Mobile) - "Roda Teto" + Ticker */}
           <div className="w-full h-auto md:h-24 bg-black flex-none border-b border-white/5 z-30 shrink-0 flex flex-col md:flex-row items-center overflow-hidden relative">
 
@@ -1719,106 +1791,6 @@ const App: React.FC = () => {
             {/* Desktop View Integrated */}
           </div>
 
-          <header className="px-6 pt-6 flex items-center justify-between relative z-50 shrink-0">
-            <div className="flex items-center gap-2">
-              <button onClick={() => setIsSidebarOpen(true)} className={`p-2 transition-colors ${styles.iconColor} md:hidden`}><Menu size={24} /></button>
-
-              {/* X Social Link */}
-              {/* X Social Link Removed */}
-            </div>
-
-
-
-            <div className="flex items-center gap-4">
-              {/* Premium Badge (Desktop Only) */}
-              {settings.tier === 'premium' ? (
-                <div
-                  className="hidden md:flex items-center gap-3 px-4 py-2 bg-green-500/10 border border-green-500/20 rounded-xl shadow-[0_0_15px_rgba(34,197,94,0.1)] transition-all hover:bg-green-500/20"
-                >
-                  <div className="flex items-center gap-2">
-                    <Zap size={14} className="text-green-500 fill-green-500 animate-pulse" />
-                    <span className="text-[10px] font-black text-green-500 uppercase tracking-widest">{TRANSLATIONS[settings.language].menu.premium_active}</span>
-                  </div>
-                  <div className="w-[1px] h-3 bg-green-500/20" />
-                  <button
-                    onClick={() => setIsManageSubscriptionOpen(true)}
-                    className="text-[9px] font-bold text-green-400/60 hover:text-green-400 uppercase tracking-tighter transition-colors"
-                  >
-                    {TRANSLATIONS[settings.language].menu.manage}
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setShowPremiumBanner(true)}
-                  className="hidden md:flex items-center gap-2 px-4 py-2 bg-yellow-400 text-black rounded-xl font-black text-[10px] uppercase tracking-widest animate-pulse shadow-[0_0_20px_rgba(250,204,21,0.4)] hover:scale-105 transition-transform"
-                >
-                  <Zap size={14} className="fill-black" />
-                  {TRANSLATIONS[settings.language].menu.be_premium}
-                </button>
-              )}
-
-              <div className="flex items-center gap-2">
-
-                {/* Language (Desktop Only) */}
-                <div className="relative hidden md:block">
-                  <button
-                    onClick={() => setIsLanguageMenuOpen(!isLanguageMenuOpen)}
-                    className={`p-2 transition-colors ${styles.iconColor}`}
-                    title={TRANSLATIONS[settings.language].general.settings}
-                  >
-                    <Globe size={20} />
-                  </button>
-
-                  {isLanguageMenuOpen && (
-                    <div className="absolute top-full right-0 mt-2 w-40 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl py-2 z-[200] animate-in slide-in-from-top-2 duration-200">
-                      <button
-                        onClick={() => {
-                          setSettings(s => {
-                            const newSettings: UserSettings = { ...s, language: 'pt' };
-                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
-                            return newSettings;
-                          });
-                          setIsLanguageMenuOpen(false);
-                        }}
-                        className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'pt' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-                      >
-                        <span className="w-4 h-4 rounded-full bg-green-600 flex items-center justify-center text-[8px] text-white">BR</span>
-                        PT
-                      </button>
-                      <button
-                        onClick={() => {
-                          setSettings(s => {
-                            const newSettings: UserSettings = { ...s, language: 'en' };
-                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
-                            return newSettings;
-                          });
-                          setIsLanguageMenuOpen(false);
-                        }}
-                        className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'en' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
-                      >
-                        <span className="w-4 h-4 rounded-full bg-blue-600 flex items-center justify-center text-[8px] text-white">US</span>
-                        EN
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  onClick={() => setSettings(s => ({ ...s, privacyMode: !s.privacyMode }))}
-                  className={`p-2 transition-colors ${styles.iconColor} ${currentView === 'allocation' ? 'hidden md:block' : 'block'}`}
-                >
-                  {settings.privacyMode ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-                <button
-                  onClick={loadData}
-                  className={`p-2 transition-all active:rotate-180 ${styles.iconColor} ${loadingState === LoadingState.LOADING ? 'animate-spin' : ''} ${currentView === 'allocation' ? 'hidden md:block' : 'block'}`}
-                >
-                  <RefreshCcw size={20} />
-                </button>
-              </div>
-            </div>
-          </header>
-
           <main className="flex-1 overflow-y-auto px-4 pt-4 pb-4 custom-scrollbar relative z-[40]">
             {currentView === 'portfolio' ? (
               <div className="flex flex-col md:flex-row gap-6 h-full">
@@ -1861,6 +1833,7 @@ const App: React.FC = () => {
                       currency={settings.currency}
                       theme={settings.theme}
                       privacyMode={settings.privacyMode}
+                      onSelect={(asset) => setSelectedChartAsset(asset)}
                     />
                   </div>
                 </div>
@@ -2117,6 +2090,36 @@ const App: React.FC = () => {
             </form>
           </Modal>
 
+          <Modal
+            isOpen={isMobileAppModalOpen}
+            onClose={() => setIsMobileAppModalOpen(false)}
+            title={TRANSLATIONS[settings.language].menu.mobile_app}
+            theme={settings.theme}
+          >
+            <div className="flex flex-col items-center justify-center p-6 text-center gap-6">
+              <div className="bg-white p-4 rounded-2xl shadow-[0_0_30px_rgba(255,255,255,0.2)]">
+                {/* QR Code Gen using Google Charts API */}
+                <img
+                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(SITE_URL)}`}
+                  alt="QR Code"
+                  className="w-48 h-48 md:w-64 md:h-64"
+                />
+              </div>
+              <div className="space-y-2">
+                <p className={`text-sm font-bold uppercase tracking-widest ${settings.theme === 'white' ? 'text-black' : 'text-white'}`}>
+                  {settings.language === 'pt' ? 'Acesse no seu Smartphone' : 'Access on your Smartphone'}
+                </p>
+                <div className="bg-black/40 border border-white/10 rounded-lg p-3 break-all">
+                  <code className="text-cyan-400 text-xs">{SITE_URL}</code>
+                </div>
+                <p className="text-[10px] text-white/40 uppercase font-medium max-w-[250px] mx-auto leading-relaxed">
+                  {settings.language === 'pt'
+                    ? 'Aponte a câmera do seu celular para o código acima para abrir o app e sincronizar seus dados.'
+                    : 'Point your phone camera at the code above to open the app and sync your data.'}
+                </p>
+              </div>
+            </div>
+          </Modal>
 
           {/* Support Toast Notification */}
           {showSupportToast && (

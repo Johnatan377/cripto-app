@@ -1,97 +1,83 @@
 
-import { db } from './firebaseClient';
-import { 
-    collection, 
-    getDocs, 
-    getDoc, 
-    doc, 
-    addDoc, 
-    updateDoc, 
-    deleteDoc, 
-    query, 
-    orderBy,
-    serverTimestamp 
-} from 'firebase/firestore';
+import { supabase } from './supabaseClient';
 import { TickerAnnouncement } from '../types';
-
-
-const COLLECTION_NAME = 'ticker_announcements';
-
-const formatDoc = (doc: any) => {
-    const data = doc.data();
-    const formatted: any = { id: doc.id, ...data };
-    if (data.created_at && typeof data.created_at.toDate === 'function') {
-        formatted.created_at = data.created_at.toDate().toISOString();
-    }
-    return formatted as TickerAnnouncement;
-};
 
 export const fetchTickerAnnouncements = async (): Promise<TickerAnnouncement[]> => {
     try {
-        console.log('[TickerService] Fetching all announcements...');
-        const tickerCol = collection(db, COLLECTION_NAME);
-        
-        // Buscar todos sem filtro ou ordem complexa para garantir que nada seja omitido
-        const tickerSnapshot = await getDocs(tickerCol);
-        console.log(`[TickerService] Found ${tickerSnapshot.size} documents in Firestore`);
-        
-        const all = tickerSnapshot.docs.map(d => {
-            const data = d.data();
-            const formatted = formatDoc(d);
-            console.log(`[TickerService] Item: ${formatted.id} - ${formatted.content_pt} (Active: ${formatted.active})`);
-            return formatted;
-        });
-        
-        // Ordenar em memória
-        return all.sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-            return dateB - dateA;
-        });
+        const { data, error } = await supabase
+            .from('ticker_announcements')
+            .select('*')
+            .order('priority', { ascending: false })
+            .order('created_at', { ascending: false });
+
+        if (error) {
+            console.error('Error fetching ticker announcements:', error);
+            return [];
+        }
+
+        return data as TickerAnnouncement[];
     } catch (err) {
-        console.error('[TickerService] Error fetching ticker announcements:', err);
+        console.error('Unexpected error fetching ticker announcements:', err);
         return [];
     }
 };
 
 export const createTickerAnnouncement = async (announcement: Omit<TickerAnnouncement, 'id' | 'created_at'>): Promise<TickerAnnouncement | null> => {
     try {
-        const tickerCol = collection(db, COLLECTION_NAME);
-        const docRef = await addDoc(tickerCol, {
-            ...announcement,
-            created_at: serverTimestamp()
-        });
+        const { data, error } = await supabase
+            .from('ticker_announcements')
+            .insert(announcement)
+            .select()
+            .single();
 
-        const newDoc = await getDoc(docRef);
-        return formatDoc(newDoc);
+        if (error) {
+            console.error('Error creating ticker announcement:', error);
+            return null;
+        }
+
+        return data as TickerAnnouncement;
     } catch (err) {
-        console.error('Error creating ticker announcement in Firebase:', err);
+        console.error('Unexpected error creating ticker announcement:', err);
         return null;
     }
 };
 
 export const updateTickerAnnouncement = async (id: string, updates: Partial<TickerAnnouncement>): Promise<TickerAnnouncement | null> => {
     try {
-        const docRef = doc(db, COLLECTION_NAME, id);
-        const { id: _, created_at, ...cleanUpdates } = updates as any;
-        
-        await updateDoc(docRef, cleanUpdates);
-        
-        const updatedDoc = await getDoc(docRef);
-        return formatDoc(updatedDoc);
+        const { data, error } = await supabase
+            .from('ticker_announcements')
+            .update(updates)
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) {
+            console.error('Error updating ticker announcement:', error);
+            return null;
+        }
+
+        return data as TickerAnnouncement;
     } catch (err) {
-        console.error('Error updating ticker announcement in Firebase:', err);
+        console.error('Unexpected error updating ticker announcement:', err);
         return null;
     }
 };
 
 export const deleteTickerAnnouncement = async (id: string): Promise<boolean> => {
     try {
-        const docRef = doc(db, COLLECTION_NAME, id);
-        await deleteDoc(docRef);
+        const { error } = await supabase
+            .from('ticker_announcements')
+            .delete()
+            .eq('id', id);
+
+        if (error) {
+            console.error('Error deleting ticker announcement:', error);
+            return false;
+        }
+
         return true;
     } catch (err) {
-        console.error('Error deleting ticker announcement from Firebase:', err);
+        console.error('Unexpected error deleting ticker announcement:', err);
         return false;
     }
 };

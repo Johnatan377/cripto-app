@@ -45,7 +45,6 @@ export interface Alert {
 }
 
 export interface PortfolioItem {
-  localId?: string; // Unique ID to prevent collisions
   assetId: string;
   quantity: number;
   buyPrice?: number;
@@ -55,8 +54,7 @@ export interface PortfolioItem {
 }
 
 export interface PortfolioData {
-  localId: string;
-  id: string; // assetId
+  id: string;
   name: string;
   symbol: string;
   image: string;
@@ -94,7 +92,7 @@ export interface AnalysisResult {
   suggestions: string[];
 }
 
-export type AppTheme = 'black' | 'matrix' | 'white' | 'yellow';
+export type AppTheme = 'black' | 'matrix' | 'neon' | 'sunset' | 'game' | 'gold' | 'ocean' | 'dracula' | 'forest' | 'blue' | 'purple' | 'white' | 'yellow' | 'tetris';
 
 export interface UserSettings {
   coinGeckoApiKey: string;

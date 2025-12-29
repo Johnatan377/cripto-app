@@ -193,62 +193,41 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                 }
             };
 
-            console.log(`AdminView: Starting and waiting for all fetchers...`);
-
             const fetchers = [
-                withTimeout(fetchAirdrops(), 'Airdrops'),
-                withTimeout(fetchSupportMessages(), 'Messages'),
-                withTimeout(fetchTickerAnnouncements(), 'Ticker'),
+                activeTab === 'airdrops' ? withTimeout(supabase.from('airdrops').select('*').order('created_at', { ascending: false }).abortSignal(abortControllerRef.current.signal), 'Airdrops') : Promise.resolve({ data: null }),
+                activeTab === 'messages' ? withTimeout(fetchSupportMessages(), 'Messages') : Promise.resolve(null),
+                activeTab === 'ticker' ? withTimeout(fetchTickerAnnouncements(), 'Ticker') : Promise.resolve(null),
                 withTimeout(fetchAdminStats(), 'Stats')
             ];
 
             const results = await Promise.allSettled(fetchers);
-            console.log("AdminView: All fetchers completed (Promise.allSettled)");
+            console.log("AdminView: Results received:", results.map(r => r.status));
 
             // 1. Airdrops
             const airdropsResult = results[0];
-            if (airdropsResult.status === 'fulfilled' && airdropsResult.value) {
-                const val = airdropsResult.value;
-                if (Array.isArray(val)) {
-                    setAirdrops(val);
-                } else if (val.error) {
-                    console.error("AdminView: Airdrops error:", val.error);
-                }
+            if (airdropsResult.status === 'fulfilled' && airdropsResult.value?.data) {
+                setAirdrops(airdropsResult.value.data);
+                console.log(`AdminView: ${airdropsResult.value.data.length} airdrops loaded`);
             } else if (airdropsResult.status === 'rejected') {
-                console.error("AdminView: Airdrops promise rejected:", airdropsResult.reason);
+                console.error("Airdrops fetch rejected:", airdropsResult.reason);
             }
 
             // 2. Messages
             const messagesResult = results[1];
             if (messagesResult.status === 'fulfilled' && messagesResult.value) {
-                const val = messagesResult.value;
-                if (Array.isArray(val)) {
-                    console.log(`AdminView: Setting ${val.length} messages`);
-                    setMessages(val);
-                } else if (val.error) {
-                    console.error("AdminView: Messages error:", val.error);
-                }
+                setMessages(messagesResult.value);
             }
 
             // 3. Ticker
             const tickerResult = results[2];
             if (tickerResult.status === 'fulfilled' && tickerResult.value) {
-                const val = tickerResult.value;
-                if (Array.isArray(val)) {
-                    console.log(`AdminView: Setting ${val.length} ticker announcements`);
-                    setAnnouncements(val);
-                } else if (val.error) {
-                    console.error("AdminView: Ticker error:", val.error);
-                }
+                setAnnouncements(tickerResult.value);
             }
 
             // 4. Stats
             const statsResult = results[3];
             if (statsResult.status === 'fulfilled' && statsResult.value) {
-                const val = statsResult.value;
-                if (val && !val.error) {
-                    setStats(val);
-                }
+                setStats(statsResult.value);
             }
 
 

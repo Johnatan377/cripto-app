@@ -116,10 +116,11 @@ const AllocationTypeView: React.FC<{
 
   const handleSave = () => {
     try {
-      if (!isPremium && logs.length >= 3) {
-        if (onLimitReached) onLimitReached();
-        return;
-      }
+      // Limit Removed
+      // if (!isPremium && logs.length >= 3) {
+      //   if (onLimitReached) onLimitReached();
+      //   return;
+      // }
 
       if (!categoria || !moeda || !quantidade || !nomeProtocolo || !wallet) {
         alert(language === 'pt' ? "Preencha todos os campos, incluindo a CARTEIRA CONECTADA." : "Please fill all fields, including the CONNECTED WALLET.");

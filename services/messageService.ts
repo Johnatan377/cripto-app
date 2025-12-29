@@ -1,23 +1,9 @@
 
 import { supabase } from './supabaseClient';
-import { db } from './firebaseClient';
-import { 
-    collection, 
-    getDocs, 
-    getDoc, 
-    doc, 
-    addDoc, 
-    updateDoc, 
-    deleteDoc, 
-    query, 
-    orderBy,
-    serverTimestamp,
-    where
-} from 'firebase/firestore';
 
 export interface SupportMessage {
     id: string;
-    created_at: any;
+    created_at: string;
     name: string;
     email: string;
     message: string;
@@ -27,56 +13,31 @@ export interface SupportMessage {
     parent_id?: string | null;
 }
 
-
-const COLLECTION_NAME = 'support_messages';
-
-const formatDoc = (doc: any) => {
-    const data = doc.data();
-    const formatted: any = { id: doc.id, ...data };
-    if (data.created_at && typeof data.created_at.toDate === 'function') {
-        formatted.created_at = data.created_at.toDate().toISOString();
-    }
-    return formatted as SupportMessage;
-};
-
 export const sendSupportMessage = async (message: Omit<SupportMessage, 'id' | 'created_at' | 'read'>) => {
     try {
-        const messagesCol = collection(db, COLLECTION_NAME);
-        await addDoc(messagesCol, {
-            ...message,
-            read: false,
-            created_at: serverTimestamp()
-        });
+        const { error } = await supabase
+            .from('support_messages')
+            .insert(message);
+
+        if (error) throw error;
         return true;
     } catch (err) {
-        console.error('Error sending support message to Firebase:', err);
+        console.error('Error sending support message:', err);
         return null;
     }
 };
 
 export const fetchSupportMessages = async () => {
     try {
-        console.log('[MessageService] Fetching all support messages...');
-        const messagesCol = collection(db, COLLECTION_NAME);
-        
-        // Buscar todos sem filtro para garantir visibilidade
-        const messagesSnapshot = await getDocs(messagesCol);
-        console.log(`[MessageService] Found ${messagesSnapshot.size} messages in Firestore`);
-        
-        const all = messagesSnapshot.docs.map(d => {
-            const formatted = formatDoc(d);
-            console.log(`[MessageService] Msg from: ${formatted.name} (${formatted.email}) - Read: ${formatted.read}`);
-            return formatted;
-        });
-        
-        // Ordenar em memória
-        return all.sort((a, b) => {
-            const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-            const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-            return dateB - dateA;
-        });
+        const { data, error } = await supabase
+            .from('support_messages')
+            .select('*')
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        return data as SupportMessage[];
     } catch (err) {
-        console.error('[MessageService] Error fetching support messages:', err);
+        console.error('Error fetching support messages:', err);
         return [];
     }
 };
@@ -84,40 +45,54 @@ export const fetchSupportMessages = async () => {
 export const markMessageAsRead = async (id: string) => {
     try {
         if (!id) return false;
-        const docRef = doc(db, COLLECTION_NAME, id);
-        await updateDoc(docRef, { read: true });
+        
+        const { error } = await supabase
+            .from('support_messages')
+            .update({ read: true })
+            .eq('id', id);
+
+        if (error) {
+            console.error('Error marking message as read in DB:', error);
+            throw error;
+        }
         return true;
     } catch (err) {
-        console.error('Error marking message as read in Firebase:', err);
+        console.error('Error marking message as read:', err);
         return false;
     }
 };
 
 export const deleteSupportMessage = async (id: string) => {
     try {
-        const docRef = doc(db, COLLECTION_NAME, id);
-        await deleteDoc(docRef);
+        const { error } = await supabase
+            .from('support_messages')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
         return true;
     } catch (err) {
-        console.error('Error deleting support message from Firebase:', err);
+        console.error('Error deleting support message:', err);
         return false;
     }
 };
 
 export const sendSupportReply = async (originalMessageId: string, replyMessage: string, userEmail: string, userName: string, userId: string, language: 'pt' | 'en' = 'pt') => {
     try {
-        // 1. Insert Reply Record in Firebase
-        const messagesCol = collection(db, COLLECTION_NAME);
-        await addDoc(messagesCol, {
-            user_id: userId,
-            name: 'Suporte CryptoFolio',
-            email: 'support@cryptofoliodefi.xyz',
-            message: replyMessage,
-            read: true,
-            direction: 'outbound',
-            parent_id: originalMessageId,
-            created_at: serverTimestamp()
-        });
+        // 1. Insert Reply Record
+        const { error: dbError } = await supabase
+            .from('support_messages')
+            .insert({
+                user_id: userId,
+                name: 'Suporte CryptoFolio',
+                email: 'support@cryptofoliodefi.xyz',
+                message: replyMessage,
+                read: true,
+                direction: 'outbound',
+                parent_id: originalMessageId
+            });
+
+        if (dbError) throw dbError;
 
         // 2. Prepare Email Content based on Language
         const subject = language === 'pt' 
@@ -134,7 +109,7 @@ export const sendSupportReply = async (originalMessageId: string, replyMessage: 
             ? 'Este é um email automático. Para continuar o atendimento, por favor utilize a área de suporte dentro do aplicativo.'
             : 'This is an automated email. To continue the support conversation, please use the support area within the application.';
 
-        // 3. Send Real Email via Supabase Edge Function (keeping this as it requires no changes and is easier than migrating to SendGrid/Firebase Functions)
+        // 3. Send Real Email via Edge Function
         const { error: emailError } = await supabase.functions.invoke('send-email', {
             body: {
                 to: userEmail,
@@ -161,7 +136,7 @@ export const sendSupportReply = async (originalMessageId: string, replyMessage: 
 
         return true;
     } catch (err) {
-        console.error('Error sending support reply to Firebase:', err);
+        console.error('Error sending support reply:', err);
         return false;
     }
 };
