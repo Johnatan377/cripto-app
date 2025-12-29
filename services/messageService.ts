@@ -1,5 +1,7 @@
 
-import { supabase } from './supabaseClient';
+import { db } from './firebaseClient';
+import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
+import { supabase } from './supabaseClient'; // Keep for Email Edge Function
 
 export interface SupportMessage {
     id: string;
@@ -15,29 +17,37 @@ export interface SupportMessage {
 
 export const sendSupportMessage = async (message: Omit<SupportMessage, 'id' | 'created_at' | 'read'>) => {
     try {
-        const { error } = await supabase
-            .from('support_messages')
-            .insert(message);
+        const newMessage = {
+            ...message,
+            created_at: new Date().toISOString(), // Firestore needs explicit date if we sort by it
+            read: false
+        };
 
-        if (error) throw error;
+        await addDoc(collection(db, 'support_messages'), newMessage);
         return true;
     } catch (err) {
-        console.error('Error sending support message:', err);
+        console.error('Error sending support message (Firebase):', err);
         return null;
     }
 };
 
 export const fetchSupportMessages = async () => {
     try {
-        const { data, error } = await supabase
-            .from('support_messages')
-            .select('*')
-            .order('created_at', { ascending: false });
+        const q = query(collection(db, 'support_messages'));
+        // Firestore simple fetch. Ideally use orderBy('created_at', 'desc') but requires index.
+        const snapshot = await getDocs(q);
+        
+        const data = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        })) as SupportMessage[];
 
-        if (error) throw error;
-        return data as SupportMessage[];
+        // Sort in memory
+        data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+
+        return data;
     } catch (err) {
-        console.error('Error fetching support messages:', err);
+        console.error('Error fetching support messages (Firebase):', err);
         return [];
     }
 };
@@ -46,55 +56,43 @@ export const markMessageAsRead = async (id: string) => {
     try {
         if (!id) return false;
         
-        const { error } = await supabase
-            .from('support_messages')
-            .update({ read: true })
-            .eq('id', id);
+        const docRef = doc(db, 'support_messages', id);
+        await updateDoc(docRef, { read: true });
 
-        if (error) {
-            console.error('Error marking message as read in DB:', error);
-            throw error;
-        }
         return true;
     } catch (err) {
-        console.error('Error marking message as read:', err);
+        console.error('Error marking message as read (Firebase):', err);
         return false;
     }
 };
 
 export const deleteSupportMessage = async (id: string) => {
     try {
-        const { error } = await supabase
-            .from('support_messages')
-            .delete()
-            .eq('id', id);
-
-        if (error) throw error;
+        await deleteDoc(doc(db, 'support_messages', id));
         return true;
     } catch (err) {
-        console.error('Error deleting support message:', err);
+        console.error('Error deleting support message (Firebase):', err);
         return false;
     }
 };
 
 export const sendSupportReply = async (originalMessageId: string, replyMessage: string, userEmail: string, userName: string, userId: string, language: 'pt' | 'en' = 'pt') => {
     try {
-        // 1. Insert Reply Record
-        const { error: dbError } = await supabase
-            .from('support_messages')
-            .insert({
-                user_id: userId,
-                name: 'Suporte CryptoFolio',
-                email: 'support@cryptofoliodefi.xyz',
-                message: replyMessage,
-                read: true,
-                direction: 'outbound',
-                parent_id: originalMessageId
-            });
+        // 1. Insert Reply Record -> FIREBASE
+        const replyRecord = {
+            user_id: userId,
+            name: 'Suporte CryptoFolio',
+            email: 'support@cryptofoliodefi.xyz',
+            message: replyMessage,
+            read: true,
+            direction: 'outbound',
+            parent_id: originalMessageId,
+            created_at: new Date().toISOString()
+        };
 
-        if (dbError) throw dbError;
+        await addDoc(collection(db, 'support_messages'), replyRecord);
 
-        // 2. Prepare Email Content based on Language
+        // 2. Prepare Email Content
         const subject = language === 'pt' 
             ? 'Resposta do Suporte - CryptoFolio DeFi' 
             : 'Support Response - CryptoFolio DeFi';
@@ -109,7 +107,7 @@ export const sendSupportReply = async (originalMessageId: string, replyMessage: 
             ? 'Este é um email automático. Para continuar o atendimento, por favor utilize a área de suporte dentro do aplicativo.'
             : 'This is an automated email. To continue the support conversation, please use the support area within the application.';
 
-        // 3. Send Real Email via Edge Function
+        // 3. Send Real Email via Edge Function -> SUPABASE
         const { error: emailError } = await supabase.functions.invoke('send-email', {
             body: {
                 to: userEmail,

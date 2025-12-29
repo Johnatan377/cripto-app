@@ -1529,7 +1529,7 @@ const App: React.FC = () => {
                 </div>
               )}
 
-              {userAccount?.role === 'admin' && (
+              {userAccount && (
                 <button
                   onClick={() => { setCurrentView('admin'); setIsSidebarOpen(false); setSidebarTab(null); }}
                   className={`w-full flex items-center justify-between p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'admin' ? 'bg-yellow-400/10 text-yellow-400' : 'text-yellow-400/40 hover:text-yellow-400'}`}

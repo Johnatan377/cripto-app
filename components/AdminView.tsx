@@ -7,6 +7,8 @@ import {
     Flame, Rocket, Bell, AlertTriangle, ShieldCheck, Heart, Star
 } from 'lucide-react';
 import { fetchAirdrops, createAirdrop, updateAirdrop, deleteAirdrop } from '../services/airdropService';
+import { db } from '../services/firebaseClient';
+import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { fetchTickerAnnouncements, createTickerAnnouncement, updateTickerAnnouncement, deleteTickerAnnouncement } from '../services/tickerService';
 import { fetchAdminStats, AdminStats } from '../services/adminService';
 import { fetchSupportMessages, markMessageAsRead, deleteSupportMessage, sendSupportReply, SupportMessage } from '../services/messageService';
@@ -33,6 +35,10 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
     const loadingRef = useRef(true);
     const timeoutRef = useRef<any>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
+
+    // MIGRATION DEBUG STATE
+    const [migrationLog, setMigrationLog] = useState<string[]>([]);
+    const [isMigrating, setIsMigrating] = useState(false);
 
 
     // Reply State
@@ -193,10 +199,25 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                 }
             };
 
+            const fetchTickerDirect = async () => {
+                const snap = await getDocs(collection(db, 'ticker_announcements'));
+                const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as TickerAnnouncement[];
+                // Sort
+                data.sort((a, b) => {
+                    const pA = a.priority || 0;
+                    const pB = b.priority || 0;
+                    if (pA !== pB) return pB - pA;
+                    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
+                    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
+                    return dateB - dateA;
+                });
+                return data;
+            };
+
             const fetchers = [
-                activeTab === 'airdrops' ? withTimeout(supabase.from('airdrops').select('*').order('created_at', { ascending: false }).abortSignal(abortControllerRef.current.signal), 'Airdrops') : Promise.resolve({ data: null }),
+                activeTab === 'airdrops' ? withTimeout(fetchAirdrops(), 'Airdrops') : Promise.resolve(null),
                 activeTab === 'messages' ? withTimeout(fetchSupportMessages(), 'Messages') : Promise.resolve(null),
-                activeTab === 'ticker' ? withTimeout(fetchTickerAnnouncements(), 'Ticker') : Promise.resolve(null),
+                activeTab === 'ticker' ? withTimeout(fetchTickerDirect(), 'Ticker') : Promise.resolve(null),
                 withTimeout(fetchAdminStats(), 'Stats')
             ];
 
@@ -205,28 +226,39 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
 
             // 1. Airdrops
             const airdropsResult = results[0];
-            if (airdropsResult.status === 'fulfilled' && airdropsResult.value?.data) {
-                setAirdrops(airdropsResult.value.data);
-                console.log(`AdminView: ${airdropsResult.value.data.length} airdrops loaded`);
+            if (airdropsResult.status === 'fulfilled' && airdropsResult.value) {
+                if (Array.isArray(airdropsResult.value)) {
+                    setAirdrops(airdropsResult.value);
+                    console.log(`AdminView: ${airdropsResult.value.length} airdrops loaded`);
+                }
             } else if (airdropsResult.status === 'rejected') {
                 console.error("Airdrops fetch rejected:", airdropsResult.reason);
             }
 
             // 2. Messages
             const messagesResult = results[1];
-            if (messagesResult.status === 'fulfilled' && messagesResult.value) {
-                setMessages(messagesResult.value);
+            if (messagesResult.status === 'fulfilled') {
+                if (Array.isArray(messagesResult.value)) {
+                    setMessages(messagesResult.value);
+                } else if (messagesResult.value?.error) {
+                    console.error("Messages fetch error:", messagesResult.value.error);
+                    // alert("Erro msg: " + messagesResult.value.error.message); // Optional
+                }
             }
 
             // 3. Ticker
             const tickerResult = results[2];
-            if (tickerResult.status === 'fulfilled' && tickerResult.value) {
-                setAnnouncements(tickerResult.value);
+            if (tickerResult.status === 'fulfilled') {
+                if (Array.isArray(tickerResult.value)) {
+                    setAnnouncements(tickerResult.value);
+                } else if (tickerResult.value?.error) {
+                    console.error("Ticker fetch error:", tickerResult.value.error);
+                }
             }
 
             // 4. Stats
             const statsResult = results[3];
-            if (statsResult.status === 'fulfilled' && statsResult.value) {
+            if (statsResult.status === 'fulfilled' && statsResult.value && !statsResult.value.error) {
                 setStats(statsResult.value);
             }
 
@@ -244,9 +276,12 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
             }
             setLoading(false);
             loadingRef.current = false;
+            isFetching.current = false;
             console.log(`AdminView: loadData cycle finished for [${activeTab}]`);
         }
     }, [activeTab, userAccount, language]);
+
+
 
     const handleAirdropSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -346,12 +381,25 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         <p className="text-xs text-white/40 uppercase font-bold mt-1 tracking-widest">Controle total do ecossistema</p>
                     </div>
 
-                    <div className="flex bg-zinc-900/50 p-1 rounded-2xl border border-white/5">
+                    {/* MIGRATION OVERLAY */}
+                    {isMigrating && (
+                        <div className="fixed inset-0 bg-black/90 flex flex-col items-center justify-center z-[100] gap-4 p-8">
+                            <Loader2 size={48} className="text-yellow-400 animate-spin" />
+                            <h2 className="text-2xl font-black text-white">MIGRATING DATA...</h2>
+                            <div className="w-full max-w-2xl bg-white/5 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs border border-white/10">
+                                {migrationLog.map((log, i) => (
+                                    <div key={i} className="mb-1 text-green-400">{log}</div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="flex bg-white/5 p-1 rounded-xl">
                         <button
                             onClick={() => setActiveTab('airdrops')}
-                            className={`px-6 py-3 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${activeTab === 'airdrops' ? 'bg-white text-black shadow-xl shadow-white/5' : 'text-white/40 hover:text-white'}`}
+                            className={`px-6 py-3 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${activeTab === 'airdrops' ? 'bg-yellow-400 text-black shadow-[0_0_20px_rgba(250,204,21,0.3)]' : 'text-white/40 hover:text-white'}`}
                         >
-                            <Globe size={16} /> Airdrops
+                            <Rocket size={16} /> Airdrops
                         </button>
 
                         <button
@@ -374,6 +422,100 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                             <Flame size={16} /> Stats
                         </button>
                     </div>
+
+                    <div className="flex bg-white/5 p-1 rounded-xl">
+                        <button
+                            onClick={async () => {
+                                if (!confirm(language === 'pt' ? 'IMPORTANTE: Isso vai copiar dados do Supabase para o Firebase. Continuar?' : 'This will import data from Supabase to Firebase. Continue?')) return;
+
+                                setIsMigrating(true);
+                                setMigrationLog(prev => [...prev, "🚀 Starting Migration Process..."]);
+
+                                try {
+                                    const log = (msg: string) => setMigrationLog(prev => [...prev, `> ${msg}`]);
+
+                                    // 1. Airdrops
+                                    log("Fetching Airdrops from Supabase...");
+                                    const { data: sbAirdrops, error: sbError } = await supabase.from('airdrops').select('*');
+
+                                    if (sbError) throw new Error("Supabase Error: " + sbError.message);
+
+                                    if (sbAirdrops && sbAirdrops.length > 0) {
+                                        log(`Found ${sbAirdrops.length} Airdrops. Migrating to Firebase...`);
+                                        let count = 0;
+                                        for (const item of sbAirdrops) {
+                                            // Check for duplicates
+                                            try {
+                                                const q = query(collection(db, 'airdrops'), where('title_pt', '==', item.title_pt));
+                                                const exists = await getDocs(q);
+                                                if (!exists.empty) {
+                                                    log(`⏩ Skipping duplicate: ${item.title_pt}`);
+                                                    continue;
+                                                }
+                                            } catch (e) { console.warn("Dup check failed", e); }
+
+                                            const { id, ...data } = item;
+                                            await createAirdrop(data as any);
+                                            count++;
+                                            if (count % 5 === 0) log(`... Migrated ${count}/${sbAirdrops.length}`);
+                                        }
+                                        log(`✅ Airdrops Migration Complete! Added ${count} new.`);
+                                    } else {
+                                        log("⚠️ No Airdrops found in Supabase.");
+                                    }
+
+                                    // 2. Ticker
+                                    log("Fetching Ticker Announcements from Supabase...");
+                                    const { data: sbTicker } = await supabase.from('ticker_announcements').select('*');
+                                    if (sbTicker && sbTicker.length > 0) {
+                                        log(`Found ${sbTicker.length} Tickers. Migrating...`);
+                                        for (const item of sbTicker) {
+                                            // Check for duplicate content
+                                            try {
+                                                const q = query(collection(db, 'ticker_announcements'), where('content_pt', '==', item.content_pt));
+                                                const exists = await getDocs(q);
+                                                if (!exists.empty) continue;
+                                            } catch (e) { }
+
+                                            const { id, ...data } = item;
+                                            await createTickerAnnouncement(data as any);
+                                        }
+                                        log("✅ Ticker Migration Complete!");
+                                    } else {
+                                        log("⚠️ No Tickers found in Supabase.");
+                                    }
+
+                                    // 3. Messages
+                                    log("Fetching Messages from Supabase...");
+                                    const { data: sbMessages } = await supabase.from('support_messages').select('*');
+                                    if (sbMessages && sbMessages.length > 0) {
+                                        log(`Found ${sbMessages.length} Messages. Migrating...`);
+                                        for (const item of sbMessages) {
+                                            const { id, ...data } = item;
+                                            await addDoc(collection(db, 'support_messages'), data);
+                                        }
+                                        log("✅ Messages Migration Complete!");
+                                    } else {
+                                        log("⚠️ No Messages found in Supabase.");
+                                    }
+
+                                    log("🎉 ALL DONE! Refreshing page in 3 seconds...");
+                                    setTimeout(() => window.location.reload(), 3000);
+
+                                } catch (err: any) {
+                                    console.error("Migration failed:", err);
+                                    setMigrationLog(prev => [...prev, `❌ ERROR: ${err.message || err}`]);
+                                    alert("Erro na migração. Veja o log na tela.");
+                                } finally {
+                                    // setIsMigrating(false); // Valid to keep it open so user sees log
+                                }
+                            }}
+                            className="px-4 py-2 bg-blue-600/10 border border-blue-600/20 rounded-full text-[10px] font-black uppercase text-blue-500 hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_20px_rgba(37,99,235,0.1)]"
+                        >
+                            Import Old Data
+                        </button>
+                    </div>
+
                 </div>
             </div>
 
@@ -421,9 +563,16 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                                         <div className="relative h-32 rounded-2xl overflow-hidden mb-4 border border-white/5 bg-black">
                                             <img src={airdrop.image_url} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" />
                                             <div className="absolute top-2 right-2 flex gap-2">
-                                                <div className="p-2 bg-black/80 text-white rounded-lg group-hover:bg-yellow-400 group-hover:text-black transition-all">
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setEditingAirdrop(airdrop);
+                                                        setIsAirdropModalOpen(true);
+                                                    }}
+                                                    className="p-2 bg-black/80 text-white rounded-lg hover:bg-yellow-400 hover:text-black transition-all"
+                                                >
                                                     <Edit2 size={14} />
-                                                </div>
+                                                </button>
                                                 <button
                                                     onClick={(e) => {
                                                         e.stopPropagation();
@@ -588,7 +737,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                                             </div>
                                         </div>
 
-                                        <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="flex items-center gap-2">
                                             <button
                                                 onClick={() => {
                                                     setEditingAnnouncement(ann);
