@@ -9,88 +9,45 @@ const CRYPTOCOMPARE_IMAGE_BASE = 'https://www.cryptocompare.com';
 const DEXSCREENER_BASE_URL = 'https://api.dexscreener.com/latest/dex';
 const HYPERLIQUID_BASE_URL = 'https://api.hyperliquid.xyz/info';
 
-// Cache key for the massive list
-const CACHE_KEY = 'ALL_COINS_CACHE';
-const CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 Hours
-
-let globalCoinList: any[] = [];
-let hyperliquidMap: Record<string, any> = {};
-
-// Initialize: Try to load from local storage or memory
-const loadCoinList = async () => {
-  if (globalCoinList.length > 0) return;
-
-  let loadedData: any[] = [];
-  try {
-    const cached = localStorage.getItem(CACHE_KEY);
-    if (cached) {
-      const { timestamp, data } = JSON.parse(cached);
-      if (Date.now() - timestamp < CACHE_DURATION) {
-        loadedData = data;
-      }
-    }
-  } catch (e) {
-    console.warn("Failed to load coin cache", e);
-  }
-
-  if (loadedData.length === 0) {
-    try {
-      const response = await fetch(COIN_LIST_URL);
-      if (response.ok) {
-        loadedData = await response.json();
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ timestamp: Date.now(), data: loadedData }));
-        } catch (e) { console.warn("Failed to save to localStorage", e); }
-      } else {
-        loadedData = TOP_COINS;
-      }
-    } catch (e) {
-      loadedData = TOP_COINS;
-    }
-  }
-
-  // Load Hyperliquid Coins (Dynamic)
-  let hyperliquidCoins: any[] = [];
-  try {
-    const resp = await fetch(HYPERLIQUID_BASE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'meta' })
-    });
-    const hlData = await resp.json();
-    // Spot assets
-    if (hlData && hlData.spotMeta && hlData.spotMeta.tokens) {
-      hyperliquidCoins = hlData.spotMeta.tokens.map((t: any, index: number) => ({
-        id: `hyp-${t.name}`, // Prefix to distinguish
-        name: t.name,
-        symbol: t.name,
-        isHyperliquid: true,
-        hlIndex: index // Store index if needed for price lookup
-      }));
-      // Save for pricing map
-      hyperliquidCoins.forEach(c => hyperliquidMap[c.id] = c);
-    }
-  } catch (e) {
-    console.warn("HL Fetch Fail", e);
-  }
-
-  // Merge: Runes -> Hyperliquid -> Global
-  globalCoinList = [...RUNES_COINS, ...hyperliquidCoins, ...loadedData];
-};
-
-loadCoinList();
-
-// Helper to check if string looks like a contract address
 const isContractAddress = (query: string) => {
-  // EVM (0x...) or Solana (Base58, usually 32-44 chars)
   return query.startsWith('0x') && query.length > 20 || (query.length > 30 && !query.includes(' '));
 };
 
-export const searchCoins = async (query: string, apiKey?: string): Promise<CoinSearchResult[]> => {
+let hyperliquidMap: Record<string, any> = {};
+const searchCache: Record<string, CoinSearchResult[]> = {};
+
+const initHyperliquid = async () => {
+    if (Object.keys(hyperliquidMap).length > 0) return;
+    try {
+        const resp = await fetch(HYPERLIQUID_BASE_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ type: 'spotMetaAndAssetCtxs' })
+        });
+        const hlData = await resp.json();
+        if (hlData && Array.isArray(hlData) && hlData[0].tokens) {
+            // Include HYPE specifically if it's there
+            hlData[0].tokens.forEach((t: any) => {
+                const id = `hyp-${t.name}`;
+                hyperliquidMap[id] = { id, name: t.name, symbol: t.name, isHyperliquid: true };
+            });
+            // Also ensure 'HYPE' is explicitly in the map if found
+            if (!hyperliquidMap['hyp-HYPE']) {
+                 hyperliquidMap['hyp-HYPE'] = { id: 'hyp-HYPE', name: 'Hyperliquid', symbol: 'HYPE', isHyperliquid: true };
+            }
+        }
+    } catch (e) { console.warn("HL Init Fail", e); }
+};
+
+export const searchCoins = async (query: string): Promise<CoinSearchResult[]> => {
   const q = query.trim();
+  if (!q || q.length < 2) return [];
   const qLower = q.toLowerCase();
 
-  // 1. Contract Address Search (DexScreener)
+  // 1. Check Local Search Cache
+  if (searchCache[qLower]) return searchCache[qLower];
+
+  // 2. Contract Address Search (DexScreener)
   if (isContractAddress(q)) {
     try {
       const response = await fetch(`${DEXSCREENER_BASE_URL}/tokens/${q}`);
@@ -108,63 +65,93 @@ export const searchCoins = async (query: string, apiKey?: string): Promise<CoinS
     return [];
   }
 
-  // 2. Regular Text Search (Local Cache)
-  if (globalCoinList.length === 0) await loadCoinList();
-
-  // First, filter roughly to get candidates
-  const candidates = globalCoinList.filter(c =>
-    c.symbol.toLowerCase() === qLower ||
+  const localCandidates = [
+    ...TOP_COINS,
+    ...RUNES_COINS,
+    ...Object.values(hyperliquidMap)
+  ].filter((c: any) => 
+    c.symbol.toLowerCase().startsWith(qLower) || 
     c.name.toLowerCase().startsWith(qLower) ||
     c.id.toLowerCase() === qLower ||
-    (qLower.length > 2 && c.name.toLowerCase().includes(qLower))
+    c.id.toLowerCase() === `hyp-${qLower}`
   );
 
-  // Then, Sort by relevance
-  const sorted = candidates.sort((a, b) => {
-    const aSymbol = a.symbol.toLowerCase();
-    const bSymbol = b.symbol.toLowerCase();
-    const aName = a.name.toLowerCase();
-    const bName = b.name.toLowerCase();
+  // 4. Remote Search (CoinGecko Search API + DexScreener Name Search)
+  let remoteResults: CoinSearchResult[] = [];
+  try {
+    const [cgRes, dexRes] = await Promise.allSettled([
+      fetch(`https://api.coingecko.com/api/v3/search?query=${q}`).then(r => r.ok ? r.json() : { coins: [] }),
+      fetch(`${DEXSCREENER_BASE_URL}/search?q=${q}`).then(r => r.ok ? r.json() : { pairs: [] })
+    ]);
+
+    if (cgRes.status === 'fulfilled') {
+      const data = cgRes.value;
+      remoteResults = [...remoteResults, ...(data.coins || []).map((c: any) => ({
+        id: c.id,
+        name: c.name,
+        symbol: c.symbol,
+        thumb: c.large || c.thumb || `https://assets.coincap.io/assets/icons/${c.symbol.toLowerCase()}@2x.png`
+      }))];
+    }
+
+    if (dexRes.status === 'fulfilled') {
+      const data = dexRes.value;
+      if (data.pairs && data.pairs.length > 0) {
+        // Only take the best pair for each unique base token from DexScreener
+        const seenTokens = new Set();
+        const dexResults: CoinSearchResult[] = [];
+        
+        data.pairs.forEach((p: any) => {
+          const addr = p.baseToken.address;
+          if (!seenTokens.has(addr)) {
+            seenTokens.add(addr);
+            dexResults.push({
+              id: addr, // Use contract address as ID for simple price fetching later
+              name: p.baseToken.name,
+              symbol: p.baseToken.symbol,
+              thumb: p.info?.imageUrl || `https://assets.coincap.io/assets/icons/${p.baseToken.symbol.toLowerCase()}@2x.png`
+            });
+          }
+        });
+        remoteResults = [...remoteResults, ...dexResults.slice(0, 10)]; // Limit DexScreener results to top 10 pairs
+      }
+    }
+  } catch (e) {
+    console.warn("Remote search partial failure", e);
+  }
+
+  // 5. Merge and Deduplicate
+  const merged = [...localCandidates.map(c => ({
+    id: c.id,
+    name: c.name,
+    symbol: c.symbol,
+    thumb: `https://assets.coincap.io/assets/icons/${c.symbol.toLowerCase()}@2x.png`
+  })), ...remoteResults];
+
+  const unique = Array.from(new Map(merged.map(item => [item.id, item])).values());
+  
+  // Sort: Symbols starting with q first, then exact matches, then HL
+  const sorted = unique.sort((a, b) => {
+    const aSym = a.symbol.toLowerCase();
+    const bSym = b.symbol.toLowerCase();
     const aId = a.id.toLowerCase();
     const bId = b.id.toLowerCase();
 
-    // 0. Hyperliquid Priority (if query is HYPE or similar)
-    if (a.isHyperliquid && !b.isHyperliquid && aSymbol === qLower) return -1;
-    if (!a.isHyperliquid && b.isHyperliquid && bSymbol === qLower) return 1;
+    if (aSym === qLower && bSym !== qLower) return -1;
+    if (bSym === qLower && aSym !== qLower) return 1;
+    
+    // Prioritize HL for specific HL queries
+    if (aId.startsWith('hyp-') && !bId.startsWith('hyp-')) return -1;
+    if (!aId.startsWith('hyp-') && bId.startsWith('hyp-')) return 1;
 
-    // 1. Exact Symbol Match (Winner)
-    if (aSymbol === qLower && bSymbol !== qLower) return -1;
-    if (bSymbol === qLower && aSymbol !== qLower) return 1;
-
-    // 2. Exact ID Match 
-    if (aId === qLower && bId !== qLower) return -1;
-    if (bId === qLower && aId !== qLower) return 1;
-
-    // 3. Exact Name Match
-    if (aName === qLower && bName !== qLower) return -1;
-    if (bName === qLower && aName !== qLower) return 1;
-
-    // 4. Starts With Symbol (Better visual match)
-    const aStartsSym = aSymbol.startsWith(qLower);
-    const bStartsSym = bSymbol.startsWith(qLower);
-    if (aStartsSym && !bStartsSym) return -1;
-    if (!aStartsSym && bStartsSym) return 1;
-
-    // 5. Shortest Symbol Length (Preference to "base" tickers over complex ones like "PENDLEWBTC")
-    if (aSymbol.length !== bSymbol.length) return aSymbol.length - bSymbol.length;
-
-    // 6. Shortest Name Length
-    return aName.length - bName.length;
+    if (aSym.startsWith(qLower) && !bSym.startsWith(qLower)) return -1;
+    if (!aSym.startsWith(qLower) && bSym.startsWith(qLower)) return 1;
+    return 0;
   });
 
-  return sorted.slice(0, 50).map(coin => ({
-    id: coin.id,
-    name: coin.name,
-    symbol: coin.symbol,
-    thumb: coin.isHyperliquid
-      ? `https://assets.coincap.io/assets/icons/${coin.symbol.toLowerCase()}@2x.png`
-      : `https://assets.coincap.io/assets/icons/${coin.symbol.toLowerCase()}@2x.png`
-  }));
+  const finalResults = sorted.slice(0, 50);
+  searchCache[qLower] = finalResults;
+  return finalResults;
 };
 
 export const fetchMarketData = async (ids: string[], currency: string, apiKey?: string) => {
@@ -200,60 +187,56 @@ export const fetchMarketData = async (ids: string[], currency: string, apiKey?: 
     }
   }
 
-  // B. Fetch Hyperliquid Data
+  // B. Fetch Hyperliquid Data (Using allMids for efficiency and reliability)
   if (hyperliquidIds.length > 0) {
     try {
-      // Fetch spot state
+      if (Object.keys(hyperliquidMap).length === 0) await initHyperliquid();
+      
       const resp = await fetch(HYPERLIQUID_BASE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'spotMetaAndAssetCtxs' })
+        body: JSON.stringify({ type: 'allMids' })
       });
-      const hlData = await resp.json();
-      // hlData = [meta, assetCtxs]
-      const spotTokens = hlData[0].tokens;
-      const spotCtxs = hlData[1];
+      const mids = await resp.json();
 
       hyperliquidIds.forEach(hid => {
-        const coinMeta = hyperliquidMap[hid];
-        if (coinMeta) {
-          // specific logic to find price in ctxs
-          // For simplified Hyperliquid, index maps to ctxs
-          const ctx = spotCtxs[coinMeta.hlIndex];
-          if (ctx) {
-            results.push({
-              id: hid,
-              name: coinMeta.name,
-              symbol: coinMeta.symbol,
-              image: `https://assets.coincap.io/assets/icons/${coinMeta.symbol.toLowerCase()}@2x.png`,
-              current_price: parseFloat(ctx.markPx),
-              price_change_percentage_24h: 0 // HL API doesn't give clean 24h change in this endpoint simply
-            });
-          }
+        const symbol = hid.replace('hyp-', '');
+        // allMids usually has keys like "HYPE", "BTC", etc.
+        const priceStr = mids[symbol];
+        
+        if (priceStr) {
+          const coinMeta = hyperliquidMap[hid] || { name: symbol, symbol: symbol };
+          results.push({
+            id: hid,
+            name: coinMeta.name,
+            symbol: coinMeta.symbol,
+            image: hid === 'hyp-HYPE' ? 'https://hyperliquid.xyz/favicon.ico' : `https://api.dicebear.com/7.x/identicon/svg?seed=${coinMeta.symbol}`,
+            current_price: parseFloat(priceStr),
+            price_change_percentage_24h: 0 
+          });
         }
       });
-
     } catch (e) { console.error("HL Price Error", e); }
   }
 
   // C. Fetch CryptoCompare Data (for regular IDs)
   if (regularIds.length > 0) {
-    if (globalCoinList.length === 0) await loadCoinList();
+    if (Object.keys(hyperliquidMap).length === 0) await initHyperliquid();
 
     const uniqueIds = Array.from(new Set(regularIds));
     const symbolsToFetch: string[] = [];
     const idToSymbolMap: Record<string, string> = {};
 
     uniqueIds.forEach(id => {
-      const coin = globalCoinList.find(c => c.id === id) || TOP_COINS.find(c => c.id === id);
+      const coin = TOP_COINS.find(c => c.id === id) || RUNES_COINS.find(c => c.id === id);
       if (coin) {
         symbolsToFetch.push(coin.symbol);
         idToSymbolMap[id] = coin.symbol;
       } else {
-        if (id.length <= 6) {
-          symbolsToFetch.push(id.toUpperCase());
-          idToSymbolMap[id] = id.toUpperCase();
-        }
+        // Fallback for custom added coins or symbols
+        const symbol = id.length <= 6 ? id.toUpperCase() : id;
+        symbolsToFetch.push(symbol);
+        idToSymbolMap[id] = symbol;
       }
     });
 
@@ -276,13 +259,13 @@ export const fetchMarketData = async (ids: string[], currency: string, apiKey?: 
               coinData = data.RAW[symUpper][tsyms];
             }
 
-            const meta = globalCoinList.find(c => c.id === id) || TOP_COINS.find(c => c.id === id) || { name: id, symbol: symbol };
+            const meta = TOP_COINS.find(c => c.id === id) || RUNES_COINS.find(c => c.id === id) || { name: id, symbol: symbol };
 
             return {
               id: id,
               name: meta.name,
               symbol: meta.symbol,
-              image: coinData && coinData.IMAGEURL ? `${CRYPTOCOMPARE_IMAGE_BASE}${coinData.IMAGEURL}` : `https://assets.coincap.io/assets/icons/${meta.symbol.toLowerCase()}@2x.png`,
+              image: coinData && coinData.IMAGEURL ? `${CRYPTOCOMPARE_IMAGE_BASE}${coinData.IMAGEURL}` : `https://api.dicebear.com/7.x/identicon/svg?seed=${meta.symbol}`,
               current_price: coinData ? coinData.PRICE : 0,
               price_change_percentage_24h: coinData ? coinData.CHANGEPCT24HOUR : 0
             };

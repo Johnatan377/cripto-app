@@ -1,6 +1,31 @@
 
-import { supabase } from './supabaseClient';
+import { db } from './firebaseClient';
+import { 
+    collection, 
+    getDocs, 
+    getDoc, 
+    doc, 
+    addDoc, 
+    updateDoc, 
+    deleteDoc, 
+    query, 
+    orderBy,
+    serverTimestamp,
+    Timestamp 
+} from 'firebase/firestore';
 import { AirdropProject } from '../types';
+
+
+const COLLECTION_NAME = 'airdrops';
+
+const formatDoc = (doc: any) => {
+    const data = doc.data();
+    const formatted: any = { id: doc.id, ...data };
+    if (data.created_at && typeof data.created_at.toDate === 'function') {
+        formatted.created_at = data.created_at.toDate().toISOString();
+    }
+    return formatted as AirdropProject;
+};
 
 export const getCachedAirdrops = (): AirdropProject[] => {
     try {
@@ -14,43 +39,34 @@ export const getCachedAirdrops = (): AirdropProject[] => {
 
 export const fetchAirdrops = async (): Promise<AirdropProject[]> => {
     try {
-        console.log("airdropService: Fetching airdrops...");
-        const { data, error, status, statusText } = await supabase
-            .from('airdrops')
-            .select('*')
-            .order('created_at', { ascending: false });
+        console.log("airdropService: Fetching airdrops from Firebase...");
+        const airdropsCol = collection(db, COLLECTION_NAME);
+        const airdropQuery = query(airdropsCol, orderBy('created_at', 'desc'));
+        const airdropSnapshot = await getDocs(airdropQuery);
+        
+        const data = airdropSnapshot.docs.map(formatDoc);
 
-        if (error) {
-            console.error('airdropService: Supabase Error:', { error, status, statusText });
-            return [];
-        }
+        console.log(`airdropService: Successfully fetched ${data.length} airdrops. Updating cache.`);
+        localStorage.setItem('cached_airdrops', JSON.stringify(data));
 
-        if (data) {
-            console.log(`airdropService: Successfully fetched ${data.length} airdrops. Updating cache.`);
-            localStorage.setItem('cached_airdrops', JSON.stringify(data));
-        }
-
-        return data as AirdropProject[];
+        return data;
     } catch (err) {
         console.error('airdropService: Unexpected error:', err);
-        return [];
+        return getCachedAirdrops(); // Fallback to cache on error
     }
 };
 
 export const getAirdropById = async (id: string): Promise<AirdropProject | null> => {
     try {
-        const { data, error } = await supabase
-            .from('airdrops')
-            .select('*')
-            .eq('id', id)
-            .single();
+        const docRef = doc(db, COLLECTION_NAME, id);
+        const docSnap = await getDoc(docRef);
 
-        if (error) {
-            console.error('Error fetching airdrop details:', error);
+        if (docSnap.exists()) {
+            return formatDoc(docSnap);
+        } else {
+            console.error('No such airdrop!');
             return null;
         }
-
-        return data as AirdropProject;
     } catch (err) {
         console.error('Unexpected error fetching airdrop details:', err);
         return null;
@@ -59,69 +75,43 @@ export const getAirdropById = async (id: string): Promise<AirdropProject | null>
 
 export const createAirdrop = async (project: Omit<AirdropProject, 'id' | 'created_at'>): Promise<AirdropProject | null> => {
     try {
-        console.log("AdminView: Attempting to create airdrop with payload:", project);
-        const { data, error } = await supabase
-            .from('airdrops')
-            .insert(project)
-            .select()
-            .single();
+        console.log("airdropService: Attempting to create airdrop in Firebase:", project);
+        const airdropsCol = collection(db, COLLECTION_NAME);
+        const docRef = await addDoc(airdropsCol, {
+            ...project,
+            created_at: serverTimestamp()
+        });
 
-        if (error) {
-            console.error('Error creating airdrop (Supabase):', error);
-            console.error('Error Details:', {
-                message: error.message,
-                details: error.details,
-                hint: error.hint,
-                code: error.code
-            });
-            return null;
-        }
-
-        console.log("AdminView: Airdrop created successfully:", data);
-        return data as AirdropProject;
+        const newDoc = await getDoc(docRef);
+        return formatDoc(newDoc);
     } catch (err: any) {
-        console.error('Unexpected error creating airdrop (Network/Code):', err);
-        if (err?.message) console.error("Error Message:", err.message);
+        console.error('Unexpected error creating airdrop in Firebase:', err);
         return null;
     }
 };
 
 export const updateAirdrop = async (id: string, updates: Partial<AirdropProject>): Promise<AirdropProject | null> => {
     try {
-        const { data, error } = await supabase
-            .from('airdrops')
-            .update(updates)
-            .eq('id', id)
-            .select()
-            .single();
-
-        if (error) {
-            console.error('Error updating airdrop:', error);
-            return null;
-        }
-
-        return data as AirdropProject;
+        const docRef = doc(db, COLLECTION_NAME, id);
+        const { id: _, created_at, ...cleanUpdates } = updates as any;
+        
+        await updateDoc(docRef, cleanUpdates);
+        
+        const updatedDoc = await getDoc(docRef);
+        return formatDoc(updatedDoc);
     } catch (err) {
-        console.error('Unexpected error updating airdrop:', err);
+        console.error('Unexpected error updating airdrop in Firebase:', err);
         return null;
     }
 };
 
 export const deleteAirdrop = async (id: string): Promise<boolean> => {
     try {
-        const { error } = await supabase
-            .from('airdrops')
-            .delete()
-            .eq('id', id);
-
-        if (error) {
-            console.error('Error deleting airdrop:', error);
-            return false;
-        }
-
+        const docRef = doc(db, COLLECTION_NAME, id);
+        await deleteDoc(docRef);
         return true;
     } catch (err) {
-        console.error('Unexpected error deleting airdrop:', err);
+        console.error('Unexpected error deleting airdrop in Firebase:', err);
         return false;
     }
 };

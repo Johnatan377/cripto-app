@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { fetchAirdrops, getCachedAirdrops } from '../services/airdropService';
 import { AirdropProject } from '../types';
 import AirdropCard from './AirdropCard';
@@ -21,14 +21,18 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
     const [selectedProject, setSelectedProject] = useState<AirdropProject | null>(null);
     const [filter, setFilter] = useState('Todos');
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
+    const isFetching = useRef(false);
 
     useEffect(() => {
         loadProjects();
     }, []);
 
     const loadProjects = async () => {
+        if (isFetching.current) return;
+
         if (projects.length === 0) setLoading(true);
         setErrorMsg(null);
+        isFetching.current = true;
 
         console.log("AirdropScreen: Iniciando busca de airdrops...");
 
@@ -57,6 +61,7 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
                 ? `Erro: ${e.message || 'Tempo limite excedido'}. Verifique se o banco de dados está online e tente recarregar.`
                 : `Error: ${e.message || 'Timeout'}. Verify if the database is online and try refreshing.`);
         } finally {
+            isFetching.current = false;
             setLoading(false);
         }
     };

@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
     LayoutDashboard, Plus, Trash2, Edit2,
     CheckCircle, X, Search, Mail, User, Clock,
@@ -124,6 +124,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
 
     useEffect(() => {
         if (isMounted) {
+            console.log(`[AdminView] Effect triggered by: [Tab: ${activeTab}]`);
             loadData();
         }
         return () => {
@@ -134,13 +135,22 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
         };
     }, [activeTab, isMounted]);
 
-    const loadData = async () => {
+    const isFetching = useRef(false);
+
+    const loadData = useCallback(async () => {
         if (!userAccount) {
             console.warn("AdminView: No userAccount in props, skipping fetch");
             return;
         }
 
-        console.log(`AdminView: Starting loadData for [${activeTab}] (User: ${userAccount.email})`);
+        if (isFetching.current) {
+            console.warn("AdminView: Fetch already in progress, skipping...");
+            return;
+        }
+
+        console.log(`[AdminView] Starting loadData for [${activeTab}] (User: ${userAccount.email})`);
+
+        isFetching.current = true;
         // Abort previous requests if they exist
         if (abortControllerRef.current) {
             console.log(`AdminView: Aborting previous fetch for [${activeTab}]`);
@@ -183,41 +193,62 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                 }
             };
 
+            console.log(`AdminView: Starting and waiting for all fetchers...`);
+
             const fetchers = [
-                activeTab === 'airdrops' ? withTimeout(supabase.from('airdrops').select('*').order('created_at', { ascending: false }).abortSignal(abortControllerRef.current.signal), 'Airdrops') : Promise.resolve({ data: null }),
-                activeTab === 'messages' ? withTimeout(fetchSupportMessages(), 'Messages') : Promise.resolve(null),
-                activeTab === 'ticker' ? withTimeout(fetchTickerAnnouncements(), 'Ticker') : Promise.resolve(null),
+                withTimeout(fetchAirdrops(), 'Airdrops'),
+                withTimeout(fetchSupportMessages(), 'Messages'),
+                withTimeout(fetchTickerAnnouncements(), 'Ticker'),
                 withTimeout(fetchAdminStats(), 'Stats')
             ];
 
             const results = await Promise.allSettled(fetchers);
-            console.log("AdminView: Results received:", results.map(r => r.status));
+            console.log("AdminView: All fetchers completed (Promise.allSettled)");
 
             // 1. Airdrops
             const airdropsResult = results[0];
-            if (airdropsResult.status === 'fulfilled' && airdropsResult.value?.data) {
-                setAirdrops(airdropsResult.value.data);
-                console.log(`AdminView: ${airdropsResult.value.data.length} airdrops loaded`);
+            if (airdropsResult.status === 'fulfilled' && airdropsResult.value) {
+                const val = airdropsResult.value;
+                if (Array.isArray(val)) {
+                    setAirdrops(val);
+                } else if (val.error) {
+                    console.error("AdminView: Airdrops error:", val.error);
+                }
             } else if (airdropsResult.status === 'rejected') {
-                console.error("Airdrops fetch rejected:", airdropsResult.reason);
+                console.error("AdminView: Airdrops promise rejected:", airdropsResult.reason);
             }
 
             // 2. Messages
             const messagesResult = results[1];
             if (messagesResult.status === 'fulfilled' && messagesResult.value) {
-                setMessages(messagesResult.value);
+                const val = messagesResult.value;
+                if (Array.isArray(val)) {
+                    console.log(`AdminView: Setting ${val.length} messages`);
+                    setMessages(val);
+                } else if (val.error) {
+                    console.error("AdminView: Messages error:", val.error);
+                }
             }
 
             // 3. Ticker
             const tickerResult = results[2];
             if (tickerResult.status === 'fulfilled' && tickerResult.value) {
-                setAnnouncements(tickerResult.value);
+                const val = tickerResult.value;
+                if (Array.isArray(val)) {
+                    console.log(`AdminView: Setting ${val.length} ticker announcements`);
+                    setAnnouncements(val);
+                } else if (val.error) {
+                    console.error("AdminView: Ticker error:", val.error);
+                }
             }
 
             // 4. Stats
             const statsResult = results[3];
             if (statsResult.status === 'fulfilled' && statsResult.value) {
-                setStats(statsResult.value);
+                const val = statsResult.value;
+                if (val && !val.error) {
+                    setStats(val);
+                }
             }
 
 
@@ -236,7 +267,7 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
             loadingRef.current = false;
             console.log(`AdminView: loadData cycle finished for [${activeTab}]`);
         }
-    };
+    }, [activeTab, userAccount, language]);
 
     const handleAirdropSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

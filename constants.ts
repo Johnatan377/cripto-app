@@ -41,17 +41,10 @@ export const STRIPE_USD_FULL_LINK = 'https://buy.stripe.com/14A28qaA74uBe4R00ucf
 export const TRANSLATIONS: Record<string, any> = {
   pt: {
     themes: {
-      game: 'Pac-Crypto',
       black: 'OLED Black',
       matrix: 'Matrix',
-      neon: 'Cyberpunk',
-      gold: 'Luxury Gold',
-      sunset: 'Sunset',
-      ocean: 'Ocean Deep',
-      forest: 'Amazon Forest',
-      purple: 'Royal Purple',
-      dracula: 'SPACE INVADERS',
-      tetris: 'TETRIS'
+      white: 'Clean Light',
+      yellow: 'Futuristic Yellow'
     },
     menu: {
       home: 'HOME',
@@ -66,7 +59,6 @@ export const TRANSLATIONS: Record<string, any> = {
       be_premium: 'SEJA PREMIUM',
       settings: 'CONFIGURAÇÕES',
       profile: 'PERFIL',
-      mobile_app: 'APP MOBILE',
       support: 'SUPORTE'
     },
     general: {
@@ -165,17 +157,10 @@ export const TRANSLATIONS: Record<string, any> = {
   },
   en: {
     themes: {
-      game: 'Pac-Crypto',
       black: 'OLED Black',
       matrix: 'Matrix',
-      neon: 'Cyberpunk',
-      gold: 'Luxury Gold',
-      sunset: 'Sunset',
-      ocean: 'Ocean Deep',
-      forest: 'Amazon Forest',
-      purple: 'Royal Purple',
-      dracula: 'SPACE INVADERS',
-      tetris: 'TETRIS'
+      white: 'Clean Light',
+      yellow: 'Futuristic Yellow'
     },
     menu: {
       home: 'HOME',
@@ -190,7 +175,6 @@ export const TRANSLATIONS: Record<string, any> = {
       be_premium: 'GO PREMIUM',
       settings: 'SETTINGS',
       profile: 'PROFILE',
-      mobile_app: 'MOBILE APP',
       support: 'SUPPORT'
     },
     general: {
@@ -302,32 +286,6 @@ export const THEME_STYLES: Record<AppTheme, ThemeStyle> = {
     iconColor: 'text-white',
     gradient: 'from-neutral-900 to-black'
   },
-  game: {
-    bg: 'bg-transparent',
-    card: 'bg-black/60',
-    text: 'text-yellow-400',
-    subText: 'text-blue-500',
-    border: 'border-blue-600',
-    accent: 'bg-blue-600',
-    accentHover: 'hover:bg-blue-500',
-    accentText: 'text-white',
-    iconColor: 'text-yellow-400',
-    gradient: 'from-black to-blue-900/40',
-    specialEffect: 'font-arcade'
-  },
-  tetris: {
-    bg: 'bg-black',
-    card: 'bg-zinc-900/80',
-    text: 'text-fuchsia-400',
-    subText: 'text-cyan-400',
-    border: 'border-fuchsia-500/50',
-    accent: 'bg-cyan-500',
-    accentHover: 'hover:bg-cyan-400',
-    accentText: 'text-black',
-    iconColor: 'text-yellow-400',
-    gradient: 'from-black to-purple-900/20',
-    specialEffect: 'font-arcade'
-  },
   matrix: {
     bg: 'bg-black/80',
     card: 'bg-black/90',
@@ -339,103 +297,6 @@ export const THEME_STYLES: Record<AppTheme, ThemeStyle> = {
     accentText: 'text-white',
     iconColor: 'text-green-500',
     gradient: 'from-black to-green-900/20'
-  },
-  neon: {
-    bg: 'bg-slate-950/40',
-    card: 'bg-slate-900/60',
-    text: 'text-cyan-300',
-    subText: 'text-fuchsia-400',
-    border: 'border-cyan-500/30',
-    accent: 'bg-fuchsia-600',
-    accentHover: 'hover:bg-fuchsia-500',
-    accentText: 'text-white',
-    iconColor: 'text-cyan-400',
-    gradient: 'from-cyan-900/20 to-fuchsia-900/20'
-  },
-  sunset: {
-    bg: 'bg-orange-950/40',
-    card: 'bg-orange-900/60',
-    text: 'text-orange-50',
-    subText: 'text-orange-400',
-    border: 'border-orange-700/30',
-    accent: 'bg-red-500',
-    accentHover: 'hover:bg-red-600',
-    accentText: 'text-white',
-    iconColor: 'text-yellow-400',
-    gradient: 'from-orange-600/20 to-red-900/40'
-  },
-  gold: {
-    bg: 'bg-black/40',
-    card: 'bg-neutral-900/60',
-    text: 'text-amber-200',
-    subText: 'text-amber-600',
-    border: 'border-amber-500/20',
-    accent: 'bg-amber-600',
-    accentHover: 'hover:bg-amber-500',
-    accentText: 'text-white',
-    iconColor: 'text-amber-400',
-    gradient: 'from-amber-400/10 to-amber-900/10'
-  },
-  ocean: {
-    bg: 'bg-cyan-950/40',
-    card: 'bg-cyan-900/50',
-    text: 'text-cyan-50',
-    subText: 'text-cyan-400',
-    border: 'border-cyan-700/30',
-    accent: 'bg-cyan-600',
-    accentHover: 'hover:bg-cyan-500',
-    accentText: 'text-white',
-    iconColor: 'text-cyan-400',
-    gradient: 'from-cyan-600/20 to-blue-900/40'
-  },
-  dracula: {
-    bg: 'bg-black',
-    card: 'bg-[#111111]/90',
-    text: 'text-[#39ff14]',
-    subText: 'text-[#0f0]',
-    border: 'border-[#39ff14]',
-    accent: 'bg-[#39ff14]',
-    accentHover: 'hover:bg-[#32cd32]',
-    accentText: 'text-black',
-    iconColor: 'text-[#39ff14]',
-    gradient: 'from-black to-[#051a05]',
-    specialEffect: 'font-arcade'
-  },
-  forest: {
-    bg: 'bg-green-950/40',
-    card: 'bg-green-900/60',
-    text: 'text-green-50',
-    subText: 'text-green-400',
-    border: 'border-green-700/30',
-    accent: 'bg-emerald-600',
-    accentHover: 'hover:bg-emerald-500',
-    accentText: 'text-white',
-    iconColor: 'text-emerald-400',
-    gradient: 'from-green-600/20 to-emerald-900/40'
-  },
-  blue: {
-    bg: 'bg-slate-900',
-    card: 'bg-slate-800',
-    text: 'text-slate-100',
-    subText: 'text-slate-400',
-    border: 'border-slate-700',
-    accent: 'bg-blue-600',
-    accentHover: 'hover:bg-blue-700',
-    accentText: 'text-white',
-    iconColor: 'text-blue-400',
-    gradient: 'from-slate-800 to-slate-900'
-  },
-  purple: {
-    bg: 'bg-purple-950/40',
-    card: 'bg-purple-900/60',
-    text: 'text-purple-50',
-    subText: 'text-purple-400',
-    border: 'border-purple-700/30',
-    accent: 'bg-purple-600',
-    accentHover: 'hover:bg-purple-500',
-    accentText: 'text-white',
-    iconColor: 'text-purple-400',
-    gradient: 'from-purple-600/20 to-fuchsia-900/40'
   },
   white: {
     bg: 'bg-gray-50',

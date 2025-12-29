@@ -603,24 +603,57 @@ const App: React.FC = () => {
         getUserProfile(userId)
       ]);
 
-      if (portfolioData) {
-        // 1. Update reference hash BEFORE updating state to block the "save back" effect
-        lastSyncHash.current = JSON.stringify({
-          portfolioItems: portfolioData.portfolio || [],
-          allocationLogs: portfolioData.allocations || [],
-          alerts: portfolioData.alerts || []
-        });
+      console.log("[Sync] Data received from Cloud:", {
+        hasPortfolio: !!portfolioData,
+        profileRole: profileData?.role,
+        profileTier: profileData?.tier
+      });
 
-        // 2. Set states
-        if (portfolioData.portfolio) setPortfolioItems(portfolioData.portfolio);
-        if (portfolioData.allocations) {
-          setAllocationLogs(portfolioData.allocations);
-          localStorage.setItem('allocation_mission_logs', JSON.stringify(portfolioData.allocations));
+      if (portfolioData) {
+        const cloudPortfolio = portfolioData.portfolio || [];
+        const cloudAllocations = portfolioData.allocations || [];
+        const cloudAlerts = portfolioData.alerts || [];
+
+        // SMART OVERWRITE PROTECTION:
+        // Se a nuvem estiver vazia mas o local tiver dados (indica que o usuário adicionou algo e deu refresh antes de salvar),
+        // preservamos o local para que o efeito de sync normal envie para a nuvem logo após.
+        const localPortfolio = portfolioItemsRef.current;
+        const localAllocations = allocationLogsRef.current;
+        const localAlerts = alertsRef.current;
+
+        const isCloudEmpty = cloudPortfolio.length === 0;
+        const isLocalPopulated = localPortfolio.length > 0;
+        const hasRecentLocalChange = (Date.now() - lastLocalChange.current) < 15000; // 15 seconds
+
+        if ((isCloudEmpty && isLocalPopulated) || hasRecentLocalChange) {
+          console.log("[Sync] Preserving local data due to empty cloud or recent local change.");
+        } else {
+          // Normal case: Cloud wins
+          if (portfolioData.portfolio) {
+            const mapped = cloudPortfolio.map((item: any) => ({
+              ...item,
+              localId: item.localId || `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+            }));
+            setPortfolioItems(mapped);
+          }
+          if (portfolioData.allocations) {
+            setAllocationLogs(cloudAllocations);
+            localStorage.setItem('allocation_mission_logs', JSON.stringify(cloudAllocations));
+          }
+          if (portfolioData.alerts) {
+            setAlerts(cloudAlerts);
+            localStorage.setItem('alerts', JSON.stringify(cloudAlerts));
+          }
         }
-        if (portfolioData.alerts) {
-          setAlerts(portfolioData.alerts);
-          localStorage.setItem('alerts', JSON.stringify(portfolioData.alerts));
-        }
+
+        // Atualizamos o hash de sincronização conforme o que veio da NUVEM.
+        // Se preservamos o local (isCloudEmpty && isLocalPopulated), o efeito de sync normal 
+        // em App.tsx perceberá que local != lastSyncHash e enviará os dados para a nuvem.
+        lastSyncHash.current = JSON.stringify({
+          portfolioItems: cloudPortfolio,
+          allocationLogs: cloudAllocations,
+          alerts: cloudAlerts
+        });
       }
 
       if (profileData) {
@@ -700,6 +733,29 @@ const App: React.FC = () => {
     }
   }, []);
 
+  // STABILIZATION: Helper to update state only if different
+  const setStableUserAccount = useCallback((newUser: UserAccount | null) => {
+    setUserAccount(prev => {
+      if (!newUser && !prev) return null;
+      if (!newUser || !prev) return newUser;
+      // Compare critical fields
+      if (prev.id === newUser.id && prev.email === newUser.email && prev.role === newUser.role) {
+        return prev; // Keep reference
+      }
+      console.log("[Auth] Updating UserAccount (Data changed)");
+      return newUser;
+    });
+  }, []);
+
+  const setStableSettings = useCallback((newSettings: UserSettings) => {
+    setSettings(prev => {
+      const isDifferent = JSON.stringify(prev) !== JSON.stringify(newSettings);
+      if (!isDifferent) return prev;
+      console.log("[Settings] Updating Settings (Data changed)");
+      return newSettings;
+    });
+  }, []);
+
   // Auth Effect - Consolidated
   useEffect(() => {
     let profileChannel: any = null;
@@ -746,11 +802,11 @@ const App: React.FC = () => {
                 // Check if Tier or Role changed independently (e.g. from Admin Panel or Stripe)
                 if (newData.tier && newData.tier !== settingsRef.current.tier) {
                   console.log("[Realtime] Tier updated remotely:", newData.tier);
-                  setSettings(s => ({ ...s, tier: newData.tier }));
+                  setStableSettings({ ...settingsRef.current, tier: newData.tier });
                 }
                 if (newData.role && userAccountRef.current && newData.role !== userAccountRef.current.role) {
                   console.log("[Realtime] Role updated remotely:", newData.role);
-                  setUserAccount(prev => prev ? { ...prev, role: newData.role } : null);
+                  setStableUserAccount({ ...userAccountRef.current, role: newData.role });
                 }
                 return;
               }
@@ -760,12 +816,12 @@ const App: React.FC = () => {
 
               // Update Tier if different
               if (newData.tier && newData.tier !== settingsRef.current.tier) {
-                setSettings(s => ({ ...s, tier: newData.tier }));
+                setStableSettings({ ...settingsRef.current, tier: newData.tier });
               }
 
               // Update Role if different
               if (newData.role && userAccountRef.current && newData.role !== userAccountRef.current.role) {
-                setUserAccount(prev => prev ? { ...prev, role: newData.role } : null);
+                setStableUserAccount({ ...userAccountRef.current, role: newData.role });
               }
 
               if (newData.portfolio) setPortfolioItems(newData.portfolio);
@@ -793,14 +849,17 @@ const App: React.FC = () => {
 
         const currentUserId = userAccountRef.current?.id;
         const mappedUser = mapSupabaseUser(session.user);
-        setUserAccount(mappedUser);
+
+        // Use stable setter
+        setStableUserAccount(mappedUser);
 
         // Re-init if account changed
         if (mappedUser.id !== currentUserId) {
+          console.log("[Auth] User ID changed or first load, initializing Cloud Data");
           await initializeCloudData(session.user.id, session);
         }
       } else {
-        setUserAccount(null);
+        setStableUserAccount(null);
         isCloudSyncInitDone.current = false;
         if (profileChannel) {
           supabase.removeChannel(profileChannel);
@@ -874,7 +933,12 @@ const App: React.FC = () => {
 
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
     const saved = localStorage.getItem('portfolio');
-    return saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
+    const items = saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
+    // Map items to ensure they all have a localId
+    return items.map((item: any) => ({
+      ...item,
+      localId: item.localId || `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    }));
   });
 
   const [alerts, setAlerts] = useState<Alert[]>(() => {
@@ -892,6 +956,13 @@ const App: React.FC = () => {
     const saved = localStorage.getItem('allocation_mission_logs');
     return saved ? JSON.parse(saved) : [];
   });
+
+  const portfolioItemsRef = useRef(portfolioItems);
+  useEffect(() => { portfolioItemsRef.current = portfolioItems; }, [portfolioItems]);
+  const allocationLogsRef = useRef(allocationLogs);
+  useEffect(() => { allocationLogsRef.current = allocationLogs; }, [allocationLogs]);
+  const alertsRef = useRef(alerts);
+  useEffect(() => { alertsRef.current = alerts; }, [alerts]);
 
 
   useEffect(() => {
@@ -1022,7 +1093,6 @@ const App: React.FC = () => {
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [isLanguageMenuOpen, setIsLanguageMenuOpen] = useState(false);
-  const [isMobileAppModalOpen, setIsMobileAppModalOpen] = useState(false);
   const [showReferralInfo, setShowReferralInfo] = useState(false);
   const SITE_URL = typeof window !== 'undefined' ? window.location.origin : 'https://seudominio.com';
 
@@ -1170,7 +1240,12 @@ const App: React.FC = () => {
       const currentVal = coin.current_price * item.quantity;
       const cost = (item.buyPrice || 0) * item.quantity;
       return {
-        ...coin, id: item.assetId, name: item.name || item.assetId, quantity: item.quantity, buyPrice: item.buyPrice || 0,
+        ...coin,
+        localId: item.localId || item.assetId, // fallback should not be needed but safe
+        id: item.assetId,
+        name: item.name || item.assetId,
+        quantity: item.quantity,
+        buyPrice: item.buyPrice || 0,
         totalValue: currentVal, totalCost: cost, pnlValue: currentVal - cost,
         pnlPercentage: cost > 0 ? ((currentVal - cost) / cost) * 100 : 0,
         allocation: totalVal > 0 ? (currentVal / totalVal) * 100 : 0
@@ -1189,12 +1264,20 @@ const App: React.FC = () => {
     if (!selectedCoin || !newAssetAmount) return;
     const qty = parseFormattedNumber(newAssetAmount);
     const bp = parseFormattedNumber(newAssetBuyPrice);
-    setPortfolioItems(prev => [...prev, { assetId: selectedCoin.id, quantity: qty, buyPrice: bp, name: selectedCoin.name, image: selectedCoin.thumb }]);
+    const localId = `liq-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    setPortfolioItems(prev => [...prev, {
+      localId,
+      assetId: selectedCoin.id,
+      quantity: qty,
+      buyPrice: bp,
+      name: selectedCoin.name,
+      image: selectedCoin.thumb
+    }]);
     setIsAddModalOpen(false); setNewAssetAmount(''); setNewAssetBuyPrice(''); setSelectedCoin(null); setSearchQuery('');
   };
 
   const handleEditAsset = (asset: PortfolioData) => {
-    setEditingAssetId(asset.id);
+    setEditingAssetId(asset.localId || asset.id);
     setNewAssetAmount(asset.quantity.toString());
     setNewAssetBuyPrice(asset.buyPrice.toString());
     setSelectedCoin({
@@ -1213,7 +1296,7 @@ const App: React.FC = () => {
     const bp = parseFormattedNumber(newAssetBuyPrice);
 
     setPortfolioItems(prev => prev.map(item => {
-      if (item.assetId === editingAssetId) {
+      if (item.localId === editingAssetId) {
         return { ...item, quantity: qty, buyPrice: bp };
       }
       return item;
@@ -1238,8 +1321,12 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRemoveAsset = (id: string) => {
-    setPortfolioItems(prev => prev.filter(p => p.assetId !== id));
+  const handleRemoveAsset = (localId: string) => {
+    console.log("Removing asset with localId:", localId);
+    setPortfolioItems(prev => prev.filter(p => {
+      const pId = p.localId || p.assetId;
+      return pId !== localId;
+    }));
   };
 
   const handleLogout = async () => {
@@ -1295,14 +1382,7 @@ const App: React.FC = () => {
         <div className="absolute inset-0 z-0 pointer-events-none overflow-hidden">
           {!['airdrops', 'allocation', 'report'].includes(currentView) && (
             <>
-              {settings.theme === 'game' && <GameBackground />}
               {settings.theme === 'matrix' && <MatrixBackground />}
-              {settings.theme === 'neon' && <NeonBackground />}
-              {settings.theme === 'dracula' && <SpaceInvadersBackground />}
-              {settings.theme === 'tetris' && <TetrisBackground />}
-              {(['sunset', 'ocean', 'forest', 'purple', 'gold', 'yellow']).includes(settings.theme) && (
-                <div className={`absolute inset-0 opacity-[0.08] bg-gradient-to-br ${styles.gradient}`}></div>
-              )}
             </>
           )}
         </div>
@@ -1357,16 +1437,6 @@ const App: React.FC = () => {
               <button onClick={() => { setCurrentView('airdrops'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'airdrops' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><span className="text-xl">🪂</span> Airdrop</button>
               <button onClick={() => { setCurrentView('report'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'report' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><FileText size={22} /> {TRANSLATIONS[settings.language].menu.report}</button>
 
-              <button
-                onClick={() => setIsMobileAppModalOpen(true)}
-                className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all text-white/40 hover:text-white`}
-              >
-                <div className="relative">
-                  <Smartphone size={22} />
-                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
-                </div>
-                {TRANSLATIONS[settings.language].menu.mobile_app}
-              </button>
 
               <button onClick={() => setSidebarTab(sidebarTab?.startsWith('settings') ? null : 'settings')} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${sidebarTab?.startsWith('settings') ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}>
                 <Settings size={22} /> {TRANSLATIONS[settings.language].menu.settings}
@@ -1790,7 +1860,6 @@ const App: React.FC = () => {
                       currency={settings.currency}
                       theme={settings.theme}
                       privacyMode={settings.privacyMode}
-                      onSelect={(asset) => setSelectedChartAsset(asset)}
                     />
                   </div>
                 </div>
@@ -2047,36 +2116,6 @@ const App: React.FC = () => {
             </form>
           </Modal>
 
-          <Modal
-            isOpen={isMobileAppModalOpen}
-            onClose={() => setIsMobileAppModalOpen(false)}
-            title={TRANSLATIONS[settings.language].menu.mobile_app}
-            theme={settings.theme}
-          >
-            <div className="flex flex-col items-center justify-center p-6 text-center gap-6">
-              <div className="bg-white p-4 rounded-2xl shadow-[0_0_30px_rgba(255,255,255,0.2)]">
-                {/* QR Code Gen using Google Charts API */}
-                <img
-                  src={`https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(SITE_URL)}`}
-                  alt="QR Code"
-                  className="w-48 h-48 md:w-64 md:h-64"
-                />
-              </div>
-              <div className="space-y-2">
-                <p className={`text-sm font-bold uppercase tracking-widest ${settings.theme === 'white' ? 'text-black' : 'text-white'}`}>
-                  {settings.language === 'pt' ? 'Acesse no seu Smartphone' : 'Access on your Smartphone'}
-                </p>
-                <div className="bg-black/40 border border-white/10 rounded-lg p-3 break-all">
-                  <code className="text-cyan-400 text-xs">{SITE_URL}</code>
-                </div>
-                <p className="text-[10px] text-white/40 uppercase font-medium max-w-[250px] mx-auto leading-relaxed">
-                  {settings.language === 'pt'
-                    ? 'Aponte a câmera do seu celular para o código acima para abrir o app e sincronizar seus dados.'
-                    : 'Point your phone camera at the code above to open the app and sync your data.'}
-                </p>
-              </div>
-            </div>
-          </Modal>
 
           {/* Support Toast Notification */}
           {showSupportToast && (

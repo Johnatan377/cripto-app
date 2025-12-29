@@ -46,13 +46,17 @@ const SupportView: React.FC<SupportViewProps> = ({ language, userAccount }) => {
                 "GoH69eu2ACfTaSN2_"
             );
 
-            // Also save to Supabase for the Admin View
-            await sendSupportMessage({
+            // Also save to Firebase for the Admin View
+            const saved = await sendSupportMessage({
                 name,
                 email,
                 message,
                 user_id: userAccount?.id
             });
+
+            if (!saved) {
+                throw new Error("Failed to save message to Firebase");
+            }
 
             setSent(true);
             setName('');
