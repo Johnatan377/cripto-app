@@ -970,6 +970,7 @@ const App: React.FC = () => {
 
     // Always save to localStorage
     localStorage.setItem('portfolio', JSON.stringify(portfolioItems));
+    localStorage.setItem('allocation_mission_logs', JSON.stringify(allocationLogs));
     localStorage.setItem('alerts', JSON.stringify(alerts));
 
     if (userAccount?.id) {
