@@ -104,8 +104,6 @@ export interface UserSettings {
   subscription_source?: 'stripe' | 'promo_code';
   promo_code_used?: string;
   subscription_active_since?: string;
-  referral_code?: string;
-  referred_by?: string;
 }
 
 export enum LoadingState {

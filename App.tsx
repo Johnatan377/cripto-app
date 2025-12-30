@@ -5,7 +5,7 @@ import {
   TrendingUp, TrendingDown, Lock, Check, Loader2, DollarSign, Euro, Banknote, Palette, Bell, LogOut, Search,
   Zap, PieChart as PieChartIcon, BarChart3, Settings, Globe, FileText, LifeBuoy, Shield,
   Flame, Rocket, CheckCircle, AlertTriangle, Info, ShieldCheck, Heart, Star, MessageSquare, Smartphone,
-  Users as UsersIcon, Copy, Trophy, Gift
+  Users as UsersIcon, Copy
 } from 'lucide-react';
 import {
   PortfolioItem, PortfolioData, UserSettings, LoadingState,
@@ -13,7 +13,8 @@ import {
 } from './types';
 import { fetchMarketData, searchCoins } from './services/cryptoService';
 import { canAddAlert, checkAlerts, playAlertSound, initAudio } from './services/alertService';
-import { getSavedAccount, signOut, mapSupabaseUser, getUserProfile, syncUserProfile, saveUserPortfolio, loadUserPortfolio, getUserIdByReferralCode } from './services/authService';
+import { getSavedAccount, signOut, mapSupabaseUser, saveUserPortfolio, loadUserPortfolio } from './services/authService';
+import { fetchUserProfile, updateUserProfile, profileToSettings } from './services/profileService';
 import AlertManagerModal from './components/AlertManagerModal';
 import { fetchTickerAnnouncements } from './services/tickerService';
 // import { fetchSupportMessages } from './services/messageService';
@@ -27,7 +28,7 @@ import { MissionLog } from './types';
 import AllocationTypeView from './components/AllocationTypeView';
 import LoginPage from './components/LoginPage';
 import PremiumArcadeBanner from './components/PremiumArcadeBanner';
-import ReferralInfoBanner from './components/ReferralInfoBanner';
+
 import ChangePasswordModal from './components/ChangePasswordModal';
 import CoinDetailView from './components/CoinDetailView';
 import ReportView from './components/ReportView';
@@ -585,6 +586,8 @@ const App: React.FC = () => {
   const userAccountRef = useRef<UserAccount | null>(null);
   useEffect(() => { userAccountRef.current = userAccount; }, [userAccount]);
 
+
+
   const lastSyncHash = useRef<string>("");
   const isCloudSyncInitDone = useRef<boolean>(false);
   const lastLocalChange = useRef<number>(0);
@@ -600,7 +603,7 @@ const App: React.FC = () => {
 
       const [portfolioData, profileData] = await Promise.all([
         loadUserPortfolio(userId),
-        getUserProfile(userId)
+        fetchUserProfile(userId)
       ]);
 
       console.log("[Sync] Data received from Cloud:", {
@@ -657,53 +660,12 @@ const App: React.FC = () => {
         // Consolidate settings merge
         let referrerId: string | null = null;
         const currentSettings = settingsRef.current;
-        const mergedSettings = {
-          ...currentSettings,
-          // Critical: Always prefer Cloud Tier if valid, otherwise keep existing (don't default to Free easily)
-          tier: (profileData.tier && profileData.tier !== 'free') ? profileData.tier : currentSettings.tier,
-          theme: profileData.theme || currentSettings.theme,
-          currency: profileData.currency || currentSettings.currency,
-          language: profileData.language || currentSettings.language,
-          referred_by: profileData.referred_by || currentSettings.referred_by,
-          referral_code: profileData.referral_code || currentSettings.referral_code
-        };
+        const mergedSettings = profileToSettings(profileData, currentSettings);
 
         setSettings(mergedSettings);
         localStorage.setItem('settings', JSON.stringify(mergedSettings));
 
-        // Handle Referral Logic (only if missing in DB)
-        const storedRefCode = typeof window !== 'undefined' ? sessionStorage.getItem('referral_code') : null;
-        const metaRefCode = session.user.user_metadata?.referral_code_input;
-        const hasReferralInput = !!(metaRefCode || storedRefCode);
 
-        // Only write back to DB (syncUserProfile) if we actually have new referral info to save
-        // OR if we merged something critical that was missing locally
-        if ((!profileData.referral_code) || (!profileData.referred_by && hasReferralInput)) {
-
-          if (!referrerId && storedRefCode) {
-            const id = await getUserIdByReferralCode(storedRefCode);
-            if (id) { referrerId = id; sessionStorage.removeItem('referral_code'); }
-          }
-          if (!referrerId && metaRefCode) {
-            const id = await getUserIdByReferralCode(metaRefCode);
-            if (id) referrerId = id;
-          }
-
-          // Update the object with potentially new referrer
-          mergedSettings.referred_by = referrerId || mergedSettings.referred_by;
-
-          await syncUserProfile(userId, mergedSettings, session.user.email, profileData.role || 'user');
-          setSettings(mergedSettings); // Update again to be safe
-        }
-
-        // FIX: Ensure Referral Code Exists (Self-Healing) - DB fallback
-        if (!mergedSettings.referral_code) {
-          console.log("[Sync] Generating missing referral code...");
-          const newCode = Math.random().toString(36).substring(2, 6).toUpperCase();
-
-          await supabase.from('profiles').update({ referral_code: newCode }).eq('id', userId);
-          setSettings(prev => ({ ...prev, referral_code: newCode }));
-        }
       }
 
       // 3. ONLY NOW release the save lock
@@ -763,6 +725,7 @@ const App: React.FC = () => {
             'postgres_changes',
             { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
             (payload: any) => {
+              console.log('⚡ [REALTIME] Evento recebido (App.tsx):', payload);
               const newData = payload.new as any;
               if (!isCloudSyncInitDone.current) return;
 
@@ -937,25 +900,37 @@ const App: React.FC = () => {
 
 
   useEffect(() => {
-    const currentHash = JSON.stringify({ portfolioItems, allocationLogs, alerts });
-
-    // Always save to localStorage
+    // 1. Always save to LocalStorage (Immediate backup)
     localStorage.setItem('portfolio', JSON.stringify(portfolioItems));
+    localStorage.setItem('allocation_mission_logs', JSON.stringify(allocationLogs));
     localStorage.setItem('alerts', JSON.stringify(alerts));
 
+    // 2. Cloud Sync (Debounced)
     if (userAccount?.id) {
       if (!isCloudSyncInitDone.current) return;
+
+      const currentHash = JSON.stringify({ portfolioItems, allocationLogs, alerts });
       if (currentHash === lastSyncHash.current) return;
 
       // Update timestamp to signal we have a pending local change - IMMEDIATELY
       lastLocalChange.current = Date.now();
 
-      const timeout = setTimeout(() => {
+      // Simple debounce to prevent spamming Supabase
+      const isMobile = window.innerWidth < 768;
+      const debounceTime = isMobile ? 2000 : 800; // Mobile espera mais para evitar conflitos
+
+      const handler = setTimeout(() => {
+        console.log('💾 [SYNC] Salvando no banco:', {
+          tier: settingsRef.current.tier,
+          subscription_source: settingsRef.current.subscription_source,
+          trigger: 'useEffect de sincronização'
+        });
         saveUserPortfolio(userAccount.id!, portfolioItems, allocationLogs, alerts);
         lastSyncHash.current = currentHash;
         console.log("[Sync] Saved to cloud");
-      }, 800);
-      return () => clearTimeout(timeout);
+      }, debounceTime);
+
+      return () => clearTimeout(handler);
     }
   }, [portfolioItems, allocationLogs, alerts, userAccount]);
 
@@ -1110,7 +1085,7 @@ const App: React.FC = () => {
 
         // Update cloud if logged in
         if (userAccountRef.current?.id) {
-          await syncUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
+          await updateUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
         }
 
         // Clean URL
@@ -1286,36 +1261,8 @@ const App: React.FC = () => {
   };
 
   const handleLogout = async () => {
-    // Provide immediate local feedback by clearing the user state
-    setUserAccount(null);
-    setIsSidebarOpen(false);
-
-    try {
-      // Clear sensitive local data
-      localStorage.removeItem('portfolio');
-      localStorage.removeItem('settings');
-      localStorage.removeItem('allocation_mission_logs');
-      localStorage.removeItem('promo_start_time');
-      localStorage.removeItem('user_account');
-
-      // Reset application state to defaults
-      setPortfolioItems(INITIAL_PORTFOLIO_ITEMS);
-      setAllocationLogs([]);
-      setSettings({
-        coinGeckoApiKey: '',
-        currency: 'usd',
-        theme: 'black',
-        language: settings.language, // Keep language for better UX
-        privacyMode: false,
-        tier: 'free'
-      });
-
-      // Perform server-side sign out (don't block the UI)
-      signOut().catch(e => console.error("SignOut error:", e));
-
-    } catch (e) {
-      console.error("Logout cleanup error:", e);
-    }
+    console.log('[App] Fazendo logout...');
+    await signOut();
   };
 
   const isAtLimit = settings.tier === 'free' && portfolioItems.length >= 3;
@@ -1424,7 +1371,7 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2 p-2 bg-white/5 rounded-xl ml-4">
                       {/* Filter themes to only: OLED (black), Light (white), Yellow, Matrix */}
                       {(['black', 'white', 'yellow', 'matrix'] as AppTheme[]).map(t => (
-                        <button key={t} onClick={() => { setSettings(s => { const newSettings = { ...s, theme: t }; if (userAccount?.id) syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
+                        <button key={t} onClick={() => { setSettings(s => { const newSettings = { ...s, theme: t }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
                       ))}
                     </div>
                   )}
@@ -1434,11 +1381,11 @@ const App: React.FC = () => {
                   {sidebarTab === 'settings-currency' && (
                     <div className="flex gap-2 p-2 bg-white/5 rounded-xl ml-4">
                       {(['usd', 'brl', 'eur'] as const).map(curr => (
-                        <button key={curr} onClick={() => { setSettings(s => { const newSettings = { ...s, currency: curr }; if (userAccount?.id) syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`flex-1 p-2 text-[10px] font-black uppercase rounded-lg border transition-all ${settings.currency === curr ? 'bg-yellow-400 border-yellow-400 text-black' : 'bg-black border-white/10 text-white/40'}`}>{curr}</button>
+                        <button key={curr} onClick={() => { setSettings(s => { const newSettings = { ...s, currency: curr }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`flex-1 p-2 text-[10px] font-black uppercase rounded-lg border transition-all ${settings.currency === curr ? 'bg-yellow-400 border-yellow-400 text-black' : 'bg-black border-white/10 text-white/40'}`}>{curr}</button>
                       ))}
                     </div>
                   )}
-                  <button onClick={() => setSettings(s => { const newLang = s.language === 'pt' ? 'en' : 'pt'; const newSettings: UserSettings = { ...s, language: newLang }; if (userAccount?.id) syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; })} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
+                  <button onClick={() => setSettings(s => { const newLang = s.language === 'pt' ? 'en' : 'pt'; const newSettings: UserSettings = { ...s, language: newLang }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; })} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
                     <Globe size={18} /> {settings.language === 'pt' ? 'PT' : 'EN'}
                   </button>
                 </div>
@@ -1448,90 +1395,18 @@ const App: React.FC = () => {
                 <LifeBuoy size={22} /> {TRANSLATIONS[settings.language].menu.support}
               </button>
 
-              <button onClick={() => setSidebarTab(sidebarTab === 'referral' ? null : 'referral')} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${sidebarTab === 'referral' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}>
-                <UsersIcon size={22} /> {TRANSLATIONS[settings.language].referral.title}
-              </button>
 
-              {sidebarTab === 'referral' && (
-                <div className="mx-2 p-4 space-y-4 animate-in slide-in-from-top-2 duration-300 bg-white/5 rounded-2xl border border-white/10 shadow-2xl">
-                  <p className="text-[10px] text-white/50 font-bold leading-relaxed uppercase tracking-wider">
-                    {TRANSLATIONS[settings.language].referral.share_msg}
-                  </p>
 
-                  <div className="space-y-1.5">
-                    <p className="text-[10px] text-yellow-400 font-extrabold uppercase tracking-[.2em] ml-1">
-                      {TRANSLATIONS[settings.language].referral.your_code}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-black/60 border border-white/10 p-3.5 rounded-xl flex items-center justify-center shadow-inner">
-                        <code className="text-white text-sm font-black tracking-[0.3em]">{settings.referral_code || '---'}</code>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (settings.referral_code) {
-                            navigator.clipboard.writeText(settings.referral_code);
-                            alert(TRANSLATIONS[settings.language].referral.copied);
-                          }
-                        }}
-                        className="p-3.5 bg-yellow-400 text-black rounded-xl hover:scale-105 active:scale-95 transition-all shadow-lg shadow-yellow-400/20"
-                        title={TRANSLATIONS[settings.language].referral.copy}
-                      >
-                        <Copy size={20} />
-                      </button>
-                    </div>
-                  </div>
 
-                  <div className="flex items-center gap-3 p-3.5 bg-yellow-400/10 border border-yellow-400/20 rounded-xl">
-                    <div className="w-8 h-8 rounded-lg bg-yellow-400/20 flex items-center justify-center shrink-0">
-                      <Trophy size={18} className="text-yellow-400" />
-                    </div>
-                    <p className="text-[10px] font-black text-yellow-400 uppercase tracking-tight leading-tight">
-                      {TRANSLATIONS[settings.language].referral.description}
-                    </p>
-                  </div>
-
-                  {/* Link de Convite */}
-                  <div className="space-y-1.5 pt-2 border-t border-white/5">
-                    <p className="text-[10px] text-zinc-500 font-extrabold uppercase tracking-[.2em] ml-1">
-                      {TRANSLATIONS[settings.language].referral.share_link}
-                    </p>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 bg-black/40 border border-white/5 p-3 px-4 rounded-xl shadow-inner text-left">
-                        <code className="text-[9px] text-white/40 font-mono block lowercase break-all">
-                          {`${SITE_URL}/?ref=${settings.referral_code}`}
-                        </code>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (settings.referral_code) {
-                            navigator.clipboard.writeText(`${SITE_URL}/?ref=${settings.referral_code}`);
-                            alert(TRANSLATIONS[settings.language].referral.copied);
-                          }
-                        }}
-                        className="p-3 bg-white/5 text-white/60 rounded-xl hover:bg-white/10 active:scale-95 transition-all"
-                        title={TRANSLATIONS[settings.language].referral.copy}
-                      >
-                        <Copy size={16} />
-                      </button>
-                    </div>
-
-                    {/* See Benefits Button */}
-                    <button
-                      onClick={() => setShowReferralInfo(true)}
-                      className="w-full mt-2 py-2 bg-gradient-to-r from-purple-500/20 to-pink-500/20 border border-purple-500/30 hover:border-purple-500/50 rounded-lg flex items-center justify-center gap-2 group transition-all"
-                    >
-                      <Gift size={14} className="text-purple-400 group-hover:scale-110 transition-transform" />
-                      <span className="text-[9px] font-bold text-purple-200 uppercase tracking-wider group-hover:text-white">
-                        {settings.language === 'pt' ? 'Ver Benefícios' : 'See Benefits'}
-                      </span>
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {userAccount && (
+              {userAccount && userAccount.role === 'admin' && (
                 <button
-                  onClick={() => { setCurrentView('admin'); setIsSidebarOpen(false); setSidebarTab(null); }}
+                  onClick={() => {
+                    if (userAccount.role === 'admin') {
+                      setCurrentView('admin');
+                      setIsSidebarOpen(false);
+                      setSidebarTab(null);
+                    }
+                  }}
                   className={`w-full flex items-center justify-between p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'admin' ? 'bg-yellow-400/10 text-yellow-400' : 'text-yellow-400/40 hover:text-yellow-400'}`}
                 >
                   <div className="flex items-center gap-4">
@@ -1602,7 +1477,7 @@ const App: React.FC = () => {
               </div>
             </div>
           </div>
-        </div>
+        </div >
 
         <div className="flex-1 flex flex-col h-full relative overflow-hidden">
           <header className="px-6 pt-6 flex items-center justify-between relative z-50 shrink-0 bg-black">
@@ -1660,7 +1535,7 @@ const App: React.FC = () => {
                         onClick={() => {
                           setSettings(s => {
                             const newSettings: UserSettings = { ...s, language: 'pt' };
-                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
+                            if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
                             return newSettings;
                           });
                           setIsLanguageMenuOpen(false);
@@ -1674,7 +1549,7 @@ const App: React.FC = () => {
                         onClick={() => {
                           setSettings(s => {
                             const newSettings: UserSettings = { ...s, language: 'en' };
-                            if (userAccount?.id) syncUserProfile(userAccount.id, newSettings);
+                            if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
                             return newSettings;
                           });
                           setIsLanguageMenuOpen(false);
@@ -1926,13 +1801,6 @@ const App: React.FC = () => {
             }}
           />
 
-          {showReferralInfo && (
-            <ReferralInfoBanner
-              onClose={() => setShowReferralInfo(false)}
-              settings={settings}
-            />
-          )}
-
           {showPremiumBanner && (
             <PremiumArcadeBanner
               language={settings.language}
@@ -1944,6 +1812,11 @@ const App: React.FC = () => {
               onClose={() => setShowPremiumBanner(false)}
               onRedeem={async (code) => {
                 const cleanCode = code.trim().toUpperCase();
+
+                console.log('🎟️ [CUPOM] ANTES do resgate:', {
+                  tier_atual: settings.tier,
+                  user_id: userAccountRef.current?.id
+                });
 
                 const { data, error } = await supabase
                   .from('promo_codes')
@@ -1962,17 +1835,55 @@ const App: React.FC = () => {
                     subscription_active_since: new Date().toISOString()
                   };
 
+                  console.log('🎟️ [CUPOM] DEPOIS do resgate (Local):', {
+                    tier_novo: newSettings.tier,
+                    subscription_source: newSettings.subscription_source,
+                    promo_code_used: newSettings.promo_code_used
+                  });
+
                   setSettings(newSettings);
                   localStorage.setItem('settings', JSON.stringify(newSettings));
                   localStorage.setItem('promo_redeemed', 'true');
 
                   // Update Cloud Profile if logged in
                   if (userAccountRef.current?.id) {
-                    await syncUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
+                    await updateUserProfile(userAccountRef.current.id, newSettings, userAccountRef.current.email, userAccountRef.current.role);
+
+                    // Verificar o que está no banco IMEDIATAMENTE após salvar
+                    setTimeout(async () => {
+                      const { data: verificacao } = await supabase
+                        .from('profiles')
+                        .select('tier, subscription_source, promo_code_used')
+                        .eq('id', userAccountRef.current?.id)
+                        .single();
+
+                      console.log('🎟️ [CUPOM] Verificação no BANCO após 1 segundo:', verificacao);
+                    }, 1000);
                   }
 
                   alert('JOGADOR VIP DETECTADO! ACESSO LIBERADO. 🚀');
                   setShowPremiumBanner(false);
+
+                  // Após ativar premium, FORÇAR reload do profile do banco
+                  setTimeout(async () => {
+                    if (userAccountRef.current?.id) {
+                      const freshProfile = await fetchUserProfile(userAccountRef.current.id);
+                      if (freshProfile) {
+                        // PROTEÇÃO CONTRA LEITURA OBSOLETA (STALE READ)
+                        // Se o banco ainda disser 'free' mas nós acabamos de virar 'premium', ignoramos o banco temporariamente
+                        const currentLocalTier = settingsRef.current.tier;
+                        if (freshProfile.tier === 'free' && currentLocalTier === 'premium') {
+                          console.warn('[App] 🛡️ Leitura obsoleta do banco detectada (Free) vs Local (Premium). Ignorando downgrade.');
+                          return;
+                        }
+
+                        const newSettings = profileToSettings(freshProfile, settingsRef.current);
+                        setSettings(newSettings);
+                        localStorage.setItem('settings', JSON.stringify(newSettings));
+                        console.log('[App] ✅ Profile recarregado após cupom:', newSettings.tier);
+                      }
+                    }
+                  }, 2000); // Aumentado para 2s para dar mais tempo de propagação no DB
                 } else {
                   alert(`CÓDIGO INVÁLIDO: "${cleanCode}"\nTente: BETA2025`);
                 }
@@ -1993,7 +1904,7 @@ const App: React.FC = () => {
               setSettings(newSettings);
               localStorage.removeItem('promo_redeemed');
               if (userAccount?.id) {
-                await syncUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role);
+                await updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role);
               }
               alert('Assinatura cancelada com sucesso.');
             }}
@@ -2145,7 +2056,7 @@ const App: React.FC = () => {
             </div>
           )}
         </div>
-      </div>
+      </div >
     </div >
   );
 };

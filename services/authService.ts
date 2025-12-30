@@ -31,15 +31,15 @@ export const signInWithPassword = async (email: string, password: string) => {
 /**
  * Cadastro com Email e Senha
  */
-export const signUpWithEmail = async (email: string, password: string, referralCode?: string) => {
+/**
+ * Cadastro com Email e Senha
+ */
+export const signUpWithEmail = async (email: string, password: string) => {
   const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
-      emailRedirectTo: window.location.origin,
-      data: {
-        referral_code_input: referralCode
-      }
+      emailRedirectTo: window.location.origin
     },
   });
   if (error) throw error;
@@ -47,21 +47,29 @@ export const signUpWithEmail = async (email: string, password: string, referralC
 };
 
 /**
- * Gera um código de referência curto e único (4 chars)
+ * Salva ou atualiza o perfil do usuário (tier, settings) no Supabase
  */
-export const generateReferralCode = (): string => {
-   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-   let result = '';
-   for (let i = 0; i < 4; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-   }
-   return result;
-};
-
 /**
  * Salva ou atualiza o perfil do usuário (tier, settings) no Supabase
  */
 export const syncUserProfile = async (userId: string, settings: UserSettings, email?: string, role?: string) => {
+  // PROTEÇÃO ANTI-DOWNGRADE: Sempre buscar tier atual do banco ANTES de atualizar
+  const { data: currentProfile } = await supabase
+    .from('profiles')
+    .select('tier, subscription_source, promo_code_used')
+    .eq('id', userId)
+    .single();
+
+  // Se já tem premium/vip no banco, NUNCA downgrade para free
+  if (currentProfile?.tier && 
+      (currentProfile.tier === 'premium' || currentProfile.tier === 'vip') &&
+      settings.tier === 'free') {
+    console.log('[Auth] 🛡️ PROTEÇÃO: Impedindo downgrade não autorizado de', currentProfile.tier, 'para free');
+    settings.tier = currentProfile.tier;
+    settings.subscription_source = currentProfile.subscription_source;
+    settings.promo_code_used = currentProfile.promo_code_used;
+  }
+
   // Try to update first
   const { data: existingProfile } = await supabase.from('profiles').select('id, tier, role').eq('id', userId).single();
 
@@ -89,15 +97,8 @@ export const syncUserProfile = async (userId: string, settings: UserSettings, em
     updated_at: new Date().toISOString(),
     subscription_source: settings.subscription_source,
     promo_code_used: settings.promo_code_used,
-    subscription_active_since: settings.subscription_active_since,
-    referral_code: settings.referral_code || (email ? generateReferralCode() : undefined),
-    referred_by: settings.referred_by
+    subscription_active_since: settings.subscription_active_since
   };
-
-  // Ensure referral code is set if it was missing in settings/profile
-  if (email && !profileData.referral_code && !existingProfile?.referral_code) {
-      profileData.referral_code = generateReferralCode();
-  }
 
   let error;
   if (existingProfile) {
@@ -148,28 +149,45 @@ export const getUserProfile = async (userId: string) => {
 };
 
 /**
- * Busca o ID de um usuário pelo seu código de indicação
- */
-export const getUserIdByReferralCode = async (code: string) => {
-  if (!code) return null;
-  const { data, error } = await supabase.rpc('get_user_id_by_referral_code', {
-    code_text: code.toUpperCase()
-  });
-
-  if (error || !data) {
-    if (error) console.error("[Auth] RPC Error:", error);
-    return null;
-  }
-  return data as string;
-};
-
-/**
  * Logout real via Supabase
  */
 export const signOut = async () => {
-  const { error } = await supabase.auth.signOut();
-  if (error) console.error("Erro ao sair:", error);
-  localStorage.removeItem('user_account');
+  try {
+    console.log('[Auth] 🚪 Iniciando logout completo...');
+
+    // 1. Logout do Supabase Auth
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      console.error('[Auth] ⚠️ Erro no signOut do Supabase:', error);
+    }
+
+    // 2. Limpar TODOS os dados do localStorage
+    console.log('[Auth] 🧹 Limpando localStorage...');
+    localStorage.clear();
+
+    // 3. Limpar sessionStorage
+    console.log('[Auth] 🧹 Limpando sessionStorage...');
+    sessionStorage.clear();
+
+    // 4. Limpar cookies
+    console.log('[Auth] 🧹 Limpando cookies...');
+    document.cookie.split(";").forEach((cookie) => {
+      document.cookie = cookie
+        .replace(/^ +/, "")
+        .replace(/=.*/, "=;expires=" + new Date().toUTCString() + ";path=/");
+    });
+
+    console.log('[Auth] ✅ Logout completo finalizado!');
+
+    // 5. Recarregar página
+    window.location.href = '/';
+
+  } catch (error) {
+    console.error('[Auth] ❌ Erro durante logout:', error);
+    localStorage.clear();
+    sessionStorage.clear();
+    window.location.href = '/';
+  }
 };
 
 /**
