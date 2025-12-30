@@ -1521,7 +1521,7 @@ const App: React.FC = () => {
                     </div>
                   )}
                   <button onClick={() => setSettings(s => ({ ...s, language: s.language === 'pt' ? 'en' : 'pt' }))} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
-                    <Globe size={18} /> {settings.language === 'pt' ? 'PT' : 'EN'}
+                    <Globe size={18} /> {settings.language === 'pt' ? 'EN' : 'PT'}
                   </button>
                 </div>
               )}
