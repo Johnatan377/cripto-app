@@ -578,7 +578,10 @@ const App: React.FC = () => {
 
   // Track settings in a ref for use in non-reactive initialization logic
   const settingsRef = useRef(settings);
-  useEffect(() => { settingsRef.current = settings; }, [settings]);
+  useEffect(() => {
+    settingsRef.current = settings;
+    localStorage.setItem('settings', JSON.stringify(settings));
+  }, [settings]);
 
 
 
@@ -588,9 +591,12 @@ const App: React.FC = () => {
 
 
 
+
+
   const lastSyncHash = useRef<string>("");
   const isCloudSyncInitDone = useRef<boolean>(false);
   const lastLocalChange = useRef<number>(0);
+  const [isSaving, setIsSaving] = useState(false);
 
 
   // Consolidate Cloud Data Initialization
@@ -606,10 +612,11 @@ const App: React.FC = () => {
         fetchUserProfile(userId)
       ]);
 
-      console.log("[Sync] Data received from Cloud:", {
-        hasPortfolio: !!portfolioData,
-        profileRole: profileData?.role,
-        profileTier: profileData?.tier
+      console.log('[App] 📦 Dados recebidos do banco:', {
+        portfolioData_length: portfolioData?.portfolio?.length,
+        portfolioData_items: portfolioData?.portfolio?.map((i: any) => i.name || i.assetId),
+        profileData_portfolio_length: profileData?.portfolio?.length,
+        profileData_portfolio_items: profileData?.portfolio?.map((i: any) => i.name || i.assetId)
       });
 
       if (portfolioData) {
@@ -630,6 +637,12 @@ const App: React.FC = () => {
             // Force a sync back to cloud (optional, but the useEffect will handle it eventually if we don't change state)
           } else {
             setPortfolioItems(portfolioData.portfolio);
+            console.log('[App] 🔄 Dados aplicados no state:', {
+              portfolioItems_length: portfolioData.portfolio?.length || 0,
+              portfolioItems: portfolioData.portfolio?.map((i: any) => i.name || i.assetId) || [],
+              settings_tier: profileData?.tier,
+              settings_language: profileData?.language
+            });
           }
         }
         if (portfolioData.allocations) {
@@ -730,7 +743,7 @@ const App: React.FC = () => {
               if (!isCloudSyncInitDone.current) return;
 
               // PROTECTION: If we changed something locally in the last 4 seconds,
-              // ignore incoming cloud data to avoid race conditions (like deleting an asset).
+              // ignore incoming cloud data to avoid race conditions.
               const timeSinceLocalChange = Date.now() - lastLocalChange.current;
               if (timeSinceLocalChange < 4000) {
                 console.log("[Realtime] Local change pending, skipping cloud update");
@@ -743,9 +756,9 @@ const App: React.FC = () => {
                 alerts: newData.alerts || []
               });
 
-              // Also skip if data is identical to local
+              // Check if data is identical to last known sync
               if (newDataHash === lastSyncHash.current) {
-                // Check if Tier or Role changed independently (e.g. from Admin Panel or Stripe)
+                // Check if Tier or Role changed independently
                 if (newData.tier && newData.tier !== settingsRef.current.tier) {
                   console.log("[Realtime] Tier updated remotely:", newData.tier);
                   setStableSettings({ ...settingsRef.current, tier: newData.tier });
@@ -754,15 +767,23 @@ const App: React.FC = () => {
                   console.log("[Realtime] Role updated remotely:", newData.role);
                   setStableUserAccount({ ...userAccountRef.current, role: newData.role });
                 }
+                // Check if language needs sync (unlikely via realtime but possible)
+                if (newData.language && newData.language !== settingsRef.current.language) {
+                  console.log("[Realtime] Language updated remotely:", newData.language);
+                  setStableSettings({ ...settingsRef.current, language: newData.language });
+                }
                 return;
               }
 
-              console.log("[Realtime] Profile updated remotely");
+              console.log("[Realtime] Profile updated remotely. Applying changes...");
               lastSyncHash.current = newDataHash;
 
-              // Update Tier if different
+              // Update Tier/Settings if different
               if (newData.tier && newData.tier !== settingsRef.current.tier) {
                 setStableSettings({ ...settingsRef.current, tier: newData.tier });
+              }
+              if (newData.language && newData.language !== settingsRef.current.language) {
+                setStableSettings({ ...settingsRef.current, language: newData.language });
               }
 
               // Update Role if different
@@ -770,7 +791,20 @@ const App: React.FC = () => {
                 setStableUserAccount({ ...userAccountRef.current, role: newData.role });
               }
 
-              if (newData.portfolio) setPortfolioItems(newData.portfolio);
+              // SAFE PORTFOLIO UPDATE
+              if (newData.portfolio) {
+                const localCount = portfolioRef.current.length;
+                const remoteCount = newData.portfolio.length;
+
+                // CRITICAL: Prevent overwrite if local has data and remote is empty (likely stale update from unrelated change)
+                if (localCount > 0 && remoteCount === 0) {
+                  console.warn(`[Realtime] 🛡️ PREVINE PERDA DE DADOS: O update remoto veio vazio, mas temos ${localCount} ativos locais.`);
+                  // We DO NOT update portfolioItems here.
+                } else {
+                  setPortfolioItems(newData.portfolio);
+                }
+              }
+
               if (newData.allocations) {
                 setAllocationLogs(newData.allocations);
                 localStorage.setItem('allocation_mission_logs', JSON.stringify(newData.allocations));
@@ -882,6 +916,10 @@ const App: React.FC = () => {
     return saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
   });
 
+  // Ref for Portfolio to access in Realtime Listener (Fix for disappearing assets)
+  const portfolioRef = useRef<PortfolioItem[]>(portfolioItems);
+  useEffect(() => { portfolioRef.current = portfolioItems; }, [portfolioItems]);
+
   const [alerts, setAlerts] = useState<Alert[]>(() => {
     const saved = localStorage.getItem('alerts');
     return saved ? JSON.parse(saved) : [];
@@ -914,18 +952,22 @@ const App: React.FC = () => {
 
       // Update timestamp to signal we have a pending local change - IMMEDIATELY
       lastLocalChange.current = Date.now();
+      setIsSaving(true);
 
       // Simple debounce to prevent spamming Supabase
       const isMobile = window.innerWidth < 768;
-      const debounceTime = isMobile ? 2000 : 800; // Mobile espera mais para evitar conflitos
+      const debounceTime = isMobile ? 1000 : 300; // Mais rápido: 1s mobile, 0.3s desktop
 
-      const handler = setTimeout(() => {
-        console.log('💾 [SYNC] Salvando no banco:', {
-          tier: settingsRef.current.tier,
-          subscription_source: settingsRef.current.subscription_source,
-          trigger: 'useEffect de sincronização'
+      const handler = setTimeout(async () => {
+        console.log('[Sync] 💾 Salvando portfolio no banco:', {
+          userId: userAccount.id,
+          portfolio_length: portfolioItems.length,
+          portfolio_items: portfolioItems.map(i => i.name || i.assetId),
+          timestamp: new Date().toISOString()
         });
-        saveUserPortfolio(userAccount.id!, portfolioItems, allocationLogs, alerts);
+        await saveUserPortfolio(userAccount.id!, portfolioItems, allocationLogs, alerts);
+        setIsSaving(false);
+        console.log('[Sync] ✅ Portfolio salvo com sucesso no banco');
         lastSyncHash.current = currentHash;
         console.log("[Sync] Saved to cloud");
       }, debounceTime);
@@ -933,6 +975,90 @@ const App: React.FC = () => {
       return () => clearTimeout(handler);
     }
   }, [portfolioItems, allocationLogs, alerts, userAccount]);
+
+  // 3. Settings Cloud Sync (Debounced)
+  useEffect(() => {
+    if (!userAccount?.id || !isCloudSyncInitDone.current) return;
+
+    // Simple hash to avoid saving unchanged settings
+    const currentHash = JSON.stringify(settings);
+    if (currentHash === localStorage.getItem('last_settings_sync_hash')) return;
+
+    const handler = setTimeout(async () => {
+      console.log('⚙️ [SYNC] Salvando settings no banco:', settings.language);
+      await updateUserProfile(userAccount.id!, settings, userAccount.email, userAccount.role);
+      localStorage.setItem('last_settings_sync_hash', currentHash);
+    }, 1500);
+
+    return () => clearTimeout(handler);
+  }, [settings, userAccount]);
+
+  // Polling: verificar mudanças no banco a cada 10 segundos
+  useEffect(() => {
+    if (!userAccount?.id) return;
+
+    console.log('[Polling] 🔄 Iniciando verificação automática a cada 10s');
+
+    const interval = setInterval(async () => {
+      try {
+        const { data } = await supabase
+          .from('profiles')
+          .select('portfolio, allocations, tier, subscription_source, language')
+          .eq('id', userAccount.id)
+          .single();
+
+        if (data) {
+          // Atualizar portfolio se diferente
+          const currentHash = JSON.stringify(portfolioItems);
+          const newHash = JSON.stringify(data.portfolio || []);
+
+          if (currentHash !== newHash) {
+            console.log('[Polling] 📥 Portfolio mudou! Atualizando...', {
+              antes: portfolioItems.length,
+              depois: data.portfolio?.length || 0
+            });
+            setPortfolioItems(data.portfolio || []);
+          }
+
+          // Atualizar allocations se diferente
+          if (data.allocations && JSON.stringify(data.allocations) !== JSON.stringify(allocationLogs)) {
+            setAllocationLogs(data.allocations);
+          }
+
+          // Atualizar tier/language se mudou
+          if (data.tier !== settings.tier || data.language !== settings.language) {
+            setSettings(s => ({
+              ...s,
+              tier: data.tier,
+              subscription_source: data.subscription_source,
+              language: data.language
+            }));
+          }
+        }
+      } catch (error) {
+        console.error('[Polling] ❌ Erro ao verificar mudanças:', error);
+      }
+    }, 10000); // A cada 10 segundos
+
+    return () => {
+      console.log('[Polling] 🛑 Parando verificação automática');
+      clearInterval(interval);
+    };
+  }, [userAccount?.id, portfolioItems, allocationLogs, settings.tier, settings.language]);
+
+  // Prevent reload while saving
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isSaving) {
+        e.preventDefault();
+        e.returnValue = 'Salvando dados... Aguarde!';
+        return 'Salvando dados... Aguarde!';
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [isSaving]);
 
   // SMART ALARM MONITORING LOOP
   useEffect(() => {
@@ -1256,8 +1382,17 @@ const App: React.FC = () => {
     }
   };
 
-  const handleRemoveAsset = (id: string) => {
-    setPortfolioItems(prev => prev.filter(p => p.assetId !== id));
+  const handleRemoveAsset = async (id: string) => {
+    // 1. Update State
+    const updated = portfolioItems.filter(p => p.assetId !== id);
+    setPortfolioItems(updated);
+
+    // 2. IMMEDIATE SAVE (No Debounce) - Fix for "deleted item reappearing"
+    if (userAccount?.id) {
+      console.log('[Delete] 💾 Salvando deletado imediatamente...');
+      await saveUserPortfolio(userAccount.id, updated, allocationLogs, alerts);
+      console.log('[Delete] ✅ Deletado e salvo.');
+    }
   };
 
   const handleLogout = async () => {
@@ -1371,7 +1506,7 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2 p-2 bg-white/5 rounded-xl ml-4">
                       {/* Filter themes to only: OLED (black), Light (white), Yellow, Matrix */}
                       {(['black', 'white', 'yellow', 'matrix'] as AppTheme[]).map(t => (
-                        <button key={t} onClick={() => { setSettings(s => { const newSettings = { ...s, theme: t }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
+                        <button key={t} onClick={() => setSettings(s => ({ ...s, theme: t }))} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
                       ))}
                     </div>
                   )}
@@ -1381,11 +1516,11 @@ const App: React.FC = () => {
                   {sidebarTab === 'settings-currency' && (
                     <div className="flex gap-2 p-2 bg-white/5 rounded-xl ml-4">
                       {(['usd', 'brl', 'eur'] as const).map(curr => (
-                        <button key={curr} onClick={() => { setSettings(s => { const newSettings = { ...s, currency: curr }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; }); }} className={`flex-1 p-2 text-[10px] font-black uppercase rounded-lg border transition-all ${settings.currency === curr ? 'bg-yellow-400 border-yellow-400 text-black' : 'bg-black border-white/10 text-white/40'}`}>{curr}</button>
+                        <button key={curr} onClick={() => setSettings(s => ({ ...s, currency: curr }))} className={`flex-1 p-2 text-[10px] font-black uppercase rounded-lg border transition-all ${settings.currency === curr ? 'bg-yellow-400 border-yellow-400 text-black' : 'bg-black border-white/10 text-white/40'}`}>{curr}</button>
                       ))}
                     </div>
                   )}
-                  <button onClick={() => setSettings(s => { const newLang = s.language === 'pt' ? 'en' : 'pt'; const newSettings: UserSettings = { ...s, language: newLang }; if (userAccount?.id) updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role); return newSettings; })} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
+                  <button onClick={() => setSettings(s => ({ ...s, language: s.language === 'pt' ? 'en' : 'pt' }))} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
                     <Globe size={18} /> {settings.language === 'pt' ? 'PT' : 'EN'}
                   </button>
                 </div>

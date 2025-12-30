@@ -37,11 +37,13 @@ export const fetchUserProfile = async (userId: string) => {
     }
 
     console.log('[ProfileService] ✅ Profile encontrado:', {
-      id: data.id,
       email: data.email,
-      role: data.role,
       tier: data.tier,
-      subscription_source: data.subscription_source
+      language: data.language,
+      portfolio_exists: !!data.portfolio,
+      portfolio_is_array: Array.isArray(data.portfolio),
+      portfolio_length: data.portfolio?.length || 0,
+      portfolio_items: data.portfolio?.map((i: any) => i.name || i.assetId)
     });
 
     return data;
@@ -78,7 +80,8 @@ export const profileToSettings = (
     tier: profileData.tier || currentSettings.tier || 'free',
     theme: profileData.theme || currentSettings.theme || 'black',
     currency: profileData.currency || currentSettings.currency || 'usd',
-    language: profileData.language || currentSettings.language || 'en',
+    language: profileData.language || 'en',
+    privacyMode: profileData.privacy_mode ?? currentSettings.privacyMode ?? false,
     subscription_source: profileData.subscription_source || currentSettings.subscription_source,
     promo_code_used: profileData.promo_code_used || currentSettings.promo_code_used,
     subscription_active_since: profileData.subscription_active_since || currentSettings.subscription_active_since
@@ -129,6 +132,7 @@ export const updateUserProfile = async (
       currency: settings.currency,
       theme: settings.theme,
       language: settings.language,
+      privacy_mode: settings.privacyMode,
       subscription_source: settings.subscription_source,
       promo_code_used: settings.promo_code_used,
       subscription_active_since: settings.subscription_active_since,
@@ -183,6 +187,7 @@ export const createUserProfile = async (
         currency: settings.currency || 'usd',
         theme: settings.theme || 'black',
         language: settings.language || 'en',
+        privacy_mode: settings.privacyMode || false,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       });
