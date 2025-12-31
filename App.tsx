@@ -545,6 +545,37 @@ const TickerIcon = ({ name, size = 16 }: { name: string; size?: number }) => {
 };
 
 const App: React.FC = () => {
+  // PWA Update Logic - Force update on version change
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/service-worker.js').then((registration) => {
+        // Verificar atualizações a cada 60 segundos
+        setInterval(() => {
+          registration.update();
+        }, 60000);
+
+        // Forçar atualização quando houver novo SW
+        registration.addEventListener('updatefound', () => {
+          const newWorker = registration.installing;
+
+          newWorker?.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // Nova versão disponível
+              console.log('[PWA] Nova versão disponível! Atualizando...');
+
+              // Forçar ativação
+              newWorker.postMessage({ type: 'skipWaiting' });
+
+              // Recarregar página
+              window.location.reload();
+            }
+          });
+        });
+      });
+    }
+  }, []);
+
+
   const [tickerData, setTickerData] = useState<any[]>([]);
 
   // Carregar dados do Ticker
@@ -993,6 +1024,7 @@ const App: React.FC = () => {
     return () => clearTimeout(handler);
   }, [settings, userAccount]);
 
+  /* Polling DESABILITADO para separar Mobile/Desktop
   // Polling: verificar mudanças no banco a cada 10 segundos
   useEffect(() => {
     if (!userAccount?.id) return;
@@ -1003,51 +1035,12 @@ const App: React.FC = () => {
     const pollingInterval = isMobile ? 5000 : 10000;
 
     const interval = setInterval(async () => {
-      try {
-        const { data } = await supabase
-          .from('profiles')
-          .select('portfolio, allocations, tier, subscription_source, language')
-          .eq('id', userAccount.id)
-          .single();
-
-        if (data) {
-          // Atualizar portfolio se diferente
-          const currentHash = JSON.stringify(portfolioItems);
-          const newHash = JSON.stringify(data.portfolio || []);
-
-          if (currentHash !== newHash) {
-            console.log('[Polling] 📥 Portfolio mudou! Atualizando...', {
-              antes: portfolioItems.length,
-              depois: data.portfolio?.length || 0
-            });
-            setPortfolioItems(data.portfolio || []);
-          }
-
-          // Atualizar allocations se diferente
-          if (data.allocations && JSON.stringify(data.allocations) !== JSON.stringify(allocationLogs)) {
-            setAllocationLogs(data.allocations);
-          }
-
-          // Atualizar tier/language se mudou
-          if (data.tier !== settings.tier || data.language !== settings.language) {
-            setSettings(s => ({
-              ...s,
-              tier: data.tier,
-              subscription_source: data.subscription_source,
-              language: data.language
-            }));
-          }
-        }
-      } catch (error) {
-        console.error('[Polling] ❌ Erro ao verificar mudanças:', error);
-      }
+      // Disabled logic...
     }, pollingInterval);
 
-    return () => {
-      console.log('[Polling] 🛑 Parando verificação automática');
-      clearInterval(interval);
-    };
+    return () => clearInterval(interval);
   }, [userAccount?.id, portfolioItems, allocationLogs, settings.tier, settings.language]);
+  */
 
   // Prevent reload while saving
   useEffect(() => {

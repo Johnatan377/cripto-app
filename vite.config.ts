@@ -9,6 +9,9 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      strategies: 'injectManifest',
+      srcDir: '.',
+      filename: 'service-worker.js',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
         name: 'CryptoFolio DeFi',
@@ -31,7 +34,7 @@ export default defineConfig({
           }
         ]
       },
-      workbox: {
+      injectManifest: {
         maximumFileSizeToCacheInBytes: 3000000
       }
     })

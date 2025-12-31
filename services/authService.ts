@@ -1,6 +1,7 @@
 import { UserAccount, UserSettings, Alert, PortfolioItem } from '../types';
 import { supabase } from './supabaseClient';
 import { ADMIN_EMAILS } from '../constants';
+import { getDeviceType } from '../utils/device';
 
 /**
  * Conecta com o Google via Supabase OAuth
@@ -245,27 +246,41 @@ export const resetPasswordForEmail = async (email: string) => {
  */
 export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem[], allocations: any[], alerts: Alert[] = []) => {
   if (!userId) return;
+
+  const deviceType = getDeviceType();
+  const portfolioField = deviceType === 'mobile' ? 'portfolio_mobile' : 'portfolio';
+  const allocationsField = deviceType === 'mobile' ? 'allocations_mobile' : 'allocations';
   
+  // Dynamic object key based on device
+  const updateData: any = {
+    [portfolioField]: portfolio,
+    [allocationsField]: allocations,
+    alerts: alerts,
+    updated_at: new Date().toISOString()
+  };
+
   const { error } = await supabase
     .from('profiles')
-    .update({
-      portfolio: portfolio,
-      allocations: allocations,
-      alerts: alerts,
-      updated_at: new Date().toISOString()
-    })
+    .update(updateData)
     .eq('id', userId);
 
-  if (error) console.error("Erro ao salvar portfólio:", error);
+  if (error) console.error(`Erro ao salvar portfólio (${deviceType}):`, error);
+  else console.log(`[Auth] ✅ Portfólio salvo para ${deviceType}`);
 };
 
 /**
  * Carrega o portfólio do usuário da nuvem
  */
 export const loadUserPortfolio = async (userId: string) => {
+  const deviceType = getDeviceType();
+  const portfolioField = deviceType === 'mobile' ? 'portfolio_mobile' : 'portfolio';
+  const allocationsField = deviceType === 'mobile' ? 'allocations_mobile' : 'allocations';
+
+  console.log(`[Auth] 📥 Carregando portfólio para: ${deviceType}`);
+
   const { data, error } = await supabase
     .from('profiles')
-    .select('portfolio, allocations, alerts')
+    .select(`${portfolioField}, ${allocationsField}, alerts`)
     .eq('id', userId)
     .single();
 
@@ -273,5 +288,10 @@ export const loadUserPortfolio = async (userId: string) => {
     console.error("Erro ao carregar portfólio:", error);
     return null;
   }
-  return data;
+  
+  return {
+    portfolio: data[portfolioField] || [],
+    allocations: data[allocationsField] || [],
+    alerts: data.alerts || []
+  };
 };
