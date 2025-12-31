@@ -36,6 +36,7 @@ import AirdropScreen from './components/AirdropScreen';
 import CoinDetailModal from './components/CoinDetailModal';
 import SupportView from './components/SupportView';
 import AdminView from './components/AdminView';
+import InstallApp from './src/pages/InstallApp';
 
 
 /** COMPONENTES DE FUNDO DINÂMICOS **/
@@ -620,6 +621,80 @@ const App: React.FC = () => {
   const userAccountRef = useRef<UserAccount | null>(null);
   useEffect(() => { userAccountRef.current = userAccount; }, [userAccount]);
 
+  // Sincronização entre abas usando BroadcastChannel
+  useEffect(() => {
+    if (!userAccount?.id) return;
+
+    // Criar canal de broadcast
+    const channel = new BroadcastChannel('portfolio-sync');
+
+    // Escutar mensagens de outras abas
+    channel.onmessage = (event) => {
+      const { type, data, userId } = event.data;
+
+      // Ignorar se for de outro usuário
+      if (userId !== userAccount.id) return;
+
+      console.log('[BroadcastChannel] Mensagem recebida:', type);
+
+      switch (type) {
+        case 'portfolio-update':
+          console.log('[BroadcastChannel] Atualizando portfolio de outra aba');
+          // Atualiza o ref para evitar salvar de volta
+          lastSyncHash.current = JSON.stringify({
+            portfolioItems: data.portfolio || [],
+            allocationLogs: data.allocations || [],
+            alerts: alerts // Mantém alertas atuais se não vierem no payload
+          });
+
+          if (data.portfolio) setPortfolioItems(data.portfolio);
+          if (data.allocations) setAllocationLogs(data.allocations);
+          break;
+
+        case 'settings-update':
+          console.log('[BroadcastChannel] Atualizando settings de outra aba');
+          setSettings(prevSettings => {
+            const newSettings = { ...prevSettings, ...data };
+            // Atualiza ref para evitar salvar de volta
+            localStorage.setItem('last_settings_sync_hash', JSON.stringify(newSettings));
+            return newSettings;
+          });
+          break;
+
+        case 'tier-update':
+          console.log('[BroadcastChannel] Atualizando tier de outra aba');
+          setSettings(prevSettings => {
+            const newSettings = { ...prevSettings, tier: data.tier };
+            localStorage.setItem('last_settings_sync_hash', JSON.stringify(newSettings));
+            return newSettings;
+          });
+          break;
+      }
+    };
+
+    // Notificar outras abas quando houver mudanças locais
+    const notifyOtherTabs = (type: string, data: any) => {
+      // Pequeno delay para garantir que o estado local já foi processado
+      setTimeout(() => {
+        channel.postMessage({
+          type,
+          data,
+          userId: userAccount.id,
+          timestamp: Date.now()
+        });
+      }, 50);
+    };
+
+    // Expor função para uso em outros componentes
+    (window as any).notifyOtherTabs = notifyOtherTabs;
+
+    return () => {
+      channel.close();
+      // Limpar referência global ao desmontar
+      if ((window as any).notifyOtherTabs) delete (window as any).notifyOtherTabs;
+    };
+  }, [userAccount?.id]);
+
 
 
 
@@ -659,23 +734,15 @@ const App: React.FC = () => {
         });
 
         // 2. Set states - WITH SAFETY CHECK
-        if (portfolioData.portfolio) {
-          const localStored = localStorage.getItem('portfolio');
-          const localItems = localStored ? JSON.parse(localStored) : [];
-          // If cloud has FEWER items than local, assume cloud is stale and don't overwrite
-          if (localItems.length > portfolioData.portfolio.length) {
-            console.log("[Sync] Local data has more items than cloud. preserving local.");
-            // Force a sync back to cloud (optional, but the useEffect will handle it eventually if we don't change state)
-          } else {
-            setPortfolioItems(portfolioData.portfolio);
-            console.log('[App] 🔄 Dados aplicados no state:', {
-              portfolioItems_length: portfolioData.portfolio?.length || 0,
-              portfolioItems: portfolioData.portfolio?.map((i: any) => i.name || i.assetId) || [],
-              settings_tier: profileData?.tier,
-              settings_language: profileData?.language
-            });
-          }
-        }
+        // TRUST CLOUD DATA: Always update to match cloud state, even if items were removed.
+        // This fixes the "cannot delete" bug where local state with more items would reject the cloud update.
+        setPortfolioItems(portfolioData.portfolio);
+        console.log('[App] 🔄 Dados aplicados no state:', {
+          portfolioItems_length: portfolioData.portfolio?.length || 0,
+          portfolioItems: portfolioData.portfolio?.map((i: any) => i.name || i.assetId) || [],
+          settings_tier: profileData?.tier,
+          settings_language: profileData?.language
+        });
         if (portfolioData.allocations) {
           setAllocationLogs(portfolioData.allocations);
           localStorage.setItem('allocation_mission_logs', JSON.stringify(portfolioData.allocations));
@@ -985,22 +1052,29 @@ const App: React.FC = () => {
       lastLocalChange.current = Date.now();
       setIsSaving(true);
 
-      // Simple debounce to prevent spamming Supabase
-      const isMobile = window.innerWidth < 768;
-      const debounceTime = isMobile ? 1000 : 300; // Mais rápido: 1s mobile, 0.3s desktop
+      // INSTANT SYNC: Fixed 300ms delay for all devices
+      const debounceTime = 300; // 0.3 segundos para todos
 
       const handler = setTimeout(async () => {
-        console.log('[Sync] 💾 Salvando portfolio no banco:', {
-          userId: userAccount.id,
-          portfolio_length: portfolioItems.length,
-          portfolio_items: portfolioItems.map(i => i.name || i.assetId),
-          timestamp: new Date().toISOString()
-        });
-        await saveUserPortfolio(userAccount.id!, portfolioItems, allocationLogs, alerts);
-        setIsSaving(false);
-        console.log('[Sync] ✅ Portfolio salvo com sucesso no banco');
-        lastSyncHash.current = currentHash;
-        console.log("[Sync] Saved to cloud");
+        console.log('[Sync] 💾 Saving to database...');
+
+        try {
+          await saveUserPortfolio(userAccount.id!, portfolioItems, allocationLogs, alerts);
+          setIsSaving(false);
+          console.log('[Sync] ✅ Saved successfully');
+          lastSyncHash.current = currentHash;
+
+          // Notify other tabs IMMEDIATELY
+          if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+            (window as any).notifyOtherTabs('portfolio-update', {
+              portfolio: portfolioItems,
+              allocations: allocationLogs
+            });
+          }
+        } catch (error) {
+          console.error('[Sync] ❌ Save failed:', error);
+          setIsSaving(false);
+        }
       }, debounceTime);
 
       return () => clearTimeout(handler);
@@ -1024,23 +1098,58 @@ const App: React.FC = () => {
     return () => clearTimeout(handler);
   }, [settings, userAccount]);
 
-  /* Polling DESABILITADO para separar Mobile/Desktop
-  // Polling: verificar mudanças no banco a cada 10 segundos
+  // Polling: Restore synchronization
   useEffect(() => {
     if (!userAccount?.id) return;
 
-    console.log('[Polling] 🔄 Iniciando verificação automática a cada 10s');
+    // 🛡️ ISOLAMENTO LOCALHOST: Impedir que o site em produção interfira nos testes locais
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    if (isLocalhost) {
+      console.log('[Polling] 🛡️ Modo Localhost: Sincronização automática via nuvem PAUSADA para evitar conflitos.');
+      return;
+    }
 
-    const isMobile = window.innerWidth < 768;
-    const pollingInterval = isMobile ? 5000 : 10000;
+    // Fixed 3000ms interval for all devices found in user request
+    const pollingInterval = 3000; // 3 segundos para todos
 
     const interval = setInterval(async () => {
-      // Disabled logic...
+      // Don't poll if currently saving
+      if (isSaving) return;
+
+      try {
+        const cloudData = await loadUserPortfolio(userAccount.id!);
+
+        if (cloudData) {
+          // Compare hashes to avoid unnecessary renders
+          const cloudHash = JSON.stringify({
+            portfolioItems: cloudData.portfolio,
+            allocationLogs: cloudData.allocations,
+            alerts: cloudData.alerts
+          });
+
+          if (cloudHash !== lastSyncHash.current) {
+            console.log('[Polling] 🔄 Detectada mudança na nuvem. Sincronizando...');
+            lastSyncHash.current = cloudHash;
+
+            setPortfolioItems(cloudData.portfolio);
+            setAllocationLogs(cloudData.allocations);
+            // Preserve triggers when syncing alerts
+            setAlerts(prev => {
+              const triggerMap = new Map(prev.map(a => [a.id, a.triggeredAt]));
+              return cloudData.alerts.map((a: Alert) => ({
+                ...a,
+                triggeredAt: triggerMap.get(a.id) || a.triggeredAt
+              }));
+            });
+          }
+        }
+      } catch (e) {
+        console.error("Polling error", e);
+      }
     }, pollingInterval);
 
     return () => clearInterval(interval);
-  }, [userAccount?.id, portfolioItems, allocationLogs, settings.tier, settings.language]);
-  */
+  }, [userAccount?.id, isSaving]);
 
   // Prevent reload while saving
   useEffect(() => {
@@ -1216,6 +1325,12 @@ const App: React.FC = () => {
       };
 
       activateStripePremium();
+      // Notificar outras abas sobre upgrade
+      if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+        (window as any).notifyOtherTabs('tier-update', {
+          tier: 'premium'
+        });
+      }
     }
   }, []); // Run only once on mount
 
@@ -1329,7 +1444,35 @@ const App: React.FC = () => {
     if (!selectedCoin || !newAssetAmount) return;
     const qty = parseFormattedNumber(newAssetAmount);
     const bp = parseFormattedNumber(newAssetBuyPrice);
-    setPortfolioItems(prev => [...prev, { assetId: selectedCoin.id, quantity: qty, buyPrice: bp, name: selectedCoin.name, image: selectedCoin.thumb }]);
+
+    // Create new item
+    const newItem = {
+      assetId: selectedCoin.id,
+      quantity: qty,
+      buyPrice: bp,
+      name: selectedCoin.name,
+      image: selectedCoin.thumb
+    };
+
+    // Update State
+    const updatedPortfolio = [...portfolioItems, newItem];
+    setPortfolioItems(updatedPortfolio);
+
+    // OPTIMISTIC BROADCAST & SAVE
+    if (userAccount?.id) {
+      // 1. Notify immediately (0ms latency)
+      if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+        (window as any).notifyOtherTabs('portfolio-update', {
+          portfolio: updatedPortfolio,
+          allocations: allocationLogs
+        });
+      }
+
+      // 2. Persist to DB
+      console.log('[AddAsset] 💾 Salvando novo ativo...');
+      saveUserPortfolio(userAccount.id, updatedPortfolio, allocationLogs, alerts);
+    }
+
     setIsAddModalOpen(false); setNewAssetAmount(''); setNewAssetBuyPrice(''); setSelectedCoin(null); setSearchQuery('');
   };
 
@@ -1346,18 +1489,34 @@ const App: React.FC = () => {
     setIsEditModalOpen(true);
   };
 
-  const handleUpdateAsset = (e: React.FormEvent) => {
+  const handleUpdateAsset = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAssetId || !newAssetAmount) return;
     const qty = parseFormattedNumber(newAssetAmount);
     const bp = parseFormattedNumber(newAssetBuyPrice);
 
-    setPortfolioItems(prev => prev.map(item => {
+    // 1. Calculate updated list
+    const updatedPortfolio = portfolioItems.map(item => {
       if (item.assetId === editingAssetId) {
         return { ...item, quantity: qty, buyPrice: bp };
       }
       return item;
-    }));
+    });
+
+    // 2. Update Local State
+    setPortfolioItems(updatedPortfolio);
+
+    // 3. OPTIMISTIC BROADCAST & SAVE
+    if (userAccount?.id) {
+      if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+        (window as any).notifyOtherTabs('portfolio-update', {
+          portfolio: updatedPortfolio,
+          allocations: allocationLogs
+        });
+      }
+      await saveUserPortfolio(userAccount.id, updatedPortfolio, allocationLogs, alerts);
+    }
+
     setIsEditModalOpen(false);
     setNewAssetAmount('');
     setNewAssetBuyPrice('');
@@ -1379,15 +1538,38 @@ const App: React.FC = () => {
   };
 
   const handleRemoveAsset = async (id: string) => {
+    console.log('[Delete] 🗑️ Removing asset:', id);
+
     // 1. Update State
     const updated = portfolioItems.filter(p => p.assetId !== id);
+    console.log('[Delete] Portfolio before:', portfolioItems.length);
+    console.log('[Delete] Portfolio after:', updated.length);
+
     setPortfolioItems(updated);
 
-    // 2. IMMEDIATE SAVE (No Debounce) - Fix for "deleted item reappearing"
+    // 2. SAVE TO DATABASE IMMEDIATELY
     if (userAccount?.id) {
-      console.log('[Delete] 💾 Salvando deletado imediatamente...');
-      await saveUserPortfolio(userAccount.id, updated, allocationLogs, alerts);
-      console.log('[Delete] ✅ Deletado e salvo.');
+      console.log('[Delete] 💾 Saving deletion to database...');
+
+      try {
+        const result = await saveUserPortfolio(userAccount.id, updated, allocationLogs, alerts);
+        console.log('[Delete] ✅ Deletion saved to database');
+
+        // 3. Broadcast to other tabs
+        if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+          console.log('[Delete] 📡 Broadcasting deletion...');
+          (window as any).notifyOtherTabs('portfolio-update', {
+            portfolio: updated,
+            allocations: allocationLogs
+          });
+          console.log('[Delete] ✅ Broadcast complete');
+        }
+      } catch (error) {
+        console.error('[Delete] ❌ Failed to save deletion:', error);
+        // Rollback on error
+        setPortfolioItems(portfolioItems);
+        alert('Failed to delete asset. Please try again.');
+      }
     }
   };
   const handleThemeChange = async (newTheme: any) => {
@@ -1412,6 +1594,12 @@ const App: React.FC = () => {
         console.error('[Theme] ❌ Erro ao salvar tema:', error);
       } else {
         console.log('[Theme] ✅ Tema salvo com sucesso');
+        // Notificar outras abas
+        if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+          (window as any).notifyOtherTabs('settings-update', {
+            theme: newTheme
+          });
+        }
       }
     }
   };
@@ -1422,7 +1610,39 @@ const App: React.FC = () => {
     await signOut();
   };
 
+
+  // Detect multiple open instances
+  useEffect(() => {
+    const channel = new BroadcastChannel('app-instance-check');
+    const instanceId = Math.random().toString(36);
+    let otherInstancesCount = 0;
+    let hasWarned = false;
+
+    channel.postMessage({ type: 'ping', instanceId });
+
+    channel.onmessage = (event) => {
+      if (event.data.type === 'ping' && event.data.instanceId !== instanceId) {
+        otherInstancesCount++;
+
+        if (otherInstancesCount >= 2 && !hasWarned) {
+          console.warn('⚠️ Multiple tabs detected');
+          hasWarned = true;
+
+          // Visual alert (optional - can comment out if not wanted)
+          // alert('⚠️ Multiple tabs open. Recommend using only one to avoid conflicts.');
+        }
+      }
+    };
+
+    return () => channel.close();
+  }, []);
+
   const isAtLimit = settings.tier === 'free' && portfolioItems.length >= 3;
+
+  // Simple Router for Install Page
+  if (typeof window !== 'undefined' && window.location.pathname === '/install') {
+    return <InstallApp />;
+  }
 
   if (!userAccount) {
     return (
@@ -1504,16 +1724,7 @@ const App: React.FC = () => {
               <button onClick={() => { setCurrentView('airdrops'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'airdrops' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><span className="text-xl">🪂</span> Airdrop</button>
               <button onClick={() => { setCurrentView('report'); setIsSidebarOpen(false); setSidebarTab(null); }} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${currentView === 'report' ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}><FileText size={22} /> {TRANSLATIONS[settings.language].menu.report}</button>
 
-              <button
-                onClick={() => setIsMobileAppModalOpen(true)}
-                className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all text-white/40 hover:text-white`}
-              >
-                <div className="relative">
-                  <Smartphone size={22} />
-                  <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-500 rounded-full animate-ping"></div>
-                </div>
-                {TRANSLATIONS[settings.language].menu.mobile_app}
-              </button>
+
 
               <button onClick={() => setSidebarTab(sidebarTab?.startsWith('settings') ? null : 'settings')} className={`w-full flex items-center gap-4 p-4 text-sm uppercase font-black rounded-xl transition-all ${sidebarTab?.startsWith('settings') ? 'bg-white/10 text-white' : 'text-white/40 hover:text-white'}`}>
                 <Settings size={22} /> {TRANSLATIONS[settings.language].menu.settings}
@@ -1673,6 +1884,8 @@ const App: React.FC = () => {
                   {TRANSLATIONS[settings.language].menu.be_premium}
                 </button>
               )}
+
+
 
               <div className="flex items-center gap-2">
 
@@ -2017,6 +2230,13 @@ const App: React.FC = () => {
                   alert('JOGADOR VIP DETECTADO! ACESSO LIBERADO. 🚀');
                   setShowPremiumBanner(false);
 
+                  // Notificar outras abas sobre upgrade via cupom
+                  if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+                    (window as any).notifyOtherTabs('tier-update', {
+                      tier: 'premium'
+                    });
+                  }
+
                   // Após ativar premium, FORÇAR reload do profile do banco
                   setTimeout(async () => {
                     if (userAccountRef.current?.id) {
@@ -2060,6 +2280,12 @@ const App: React.FC = () => {
                 await updateUserProfile(userAccount.id, newSettings, userAccount.email, userAccount.role);
               }
               alert('Assinatura cancelada com sucesso.');
+              // Notificar outras abas sobre downgrade
+              if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+                (window as any).notifyOtherTabs('tier-update', {
+                  tier: 'free'
+                });
+              }
             }}
           />
 

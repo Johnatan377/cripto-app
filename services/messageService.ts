@@ -1,7 +1,4 @@
-
-import { db } from './firebaseClient';
-import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
-import { supabase } from './supabaseClient'; // Keep for Email Edge Function
+import { supabase } from './supabaseClient';
 
 export interface SupportMessage {
     id: string;
@@ -19,35 +16,33 @@ export const sendSupportMessage = async (message: Omit<SupportMessage, 'id' | 'c
     try {
         const newMessage = {
             ...message,
-            created_at: new Date().toISOString(), // Firestore needs explicit date if we sort by it
+            created_at: new Date().toISOString(),
             read: false
         };
 
-        await addDoc(collection(db, 'support_messages'), newMessage);
+        const { error } = await supabase
+            .from('support_messages')
+            .insert([newMessage]);
+
+        if (error) throw error;
         return true;
     } catch (err) {
-        console.error('Error sending support message (Firebase):', err);
+        console.error('Error sending support message (Supabase):', err);
         return null;
     }
 };
 
 export const fetchSupportMessages = async () => {
     try {
-        const q = query(collection(db, 'support_messages'));
-        // Firestore simple fetch. Ideally use orderBy('created_at', 'desc') but requires index.
-        const snapshot = await getDocs(q);
+        const { data, error } = await supabase
+            .from('support_messages')
+            .select('*')
+            .order('created_at', { ascending: false });
         
-        const data = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        })) as SupportMessage[];
-
-        // Sort in memory
-        data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-
-        return data;
+        if (error) throw error;
+        return data as SupportMessage[];
     } catch (err) {
-        console.error('Error fetching support messages (Firebase):', err);
+        console.error('Error fetching support messages (Supabase):', err);
         return [];
     }
 };
@@ -56,29 +51,37 @@ export const markMessageAsRead = async (id: string) => {
     try {
         if (!id) return false;
         
-        const docRef = doc(db, 'support_messages', id);
-        await updateDoc(docRef, { read: true });
+        const { error } = await supabase
+            .from('support_messages')
+            .update({ read: true })
+            .eq('id', id);
 
+        if (error) throw error;
         return true;
     } catch (err) {
-        console.error('Error marking message as read (Firebase):', err);
+        console.error('Error marking message as read (Supabase):', err);
         return false;
     }
 };
 
 export const deleteSupportMessage = async (id: string) => {
     try {
-        await deleteDoc(doc(db, 'support_messages', id));
+        const { error } = await supabase
+            .from('support_messages')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
         return true;
     } catch (err) {
-        console.error('Error deleting support message (Firebase):', err);
+        console.error('Error deleting support message (Supabase):', err);
         return false;
     }
 };
 
 export const sendSupportReply = async (originalMessageId: string, replyMessage: string, userEmail: string, userName: string, userId: string, language: 'pt' | 'en' = 'pt') => {
     try {
-        // 1. Insert Reply Record -> FIREBASE
+        // 1. Insert Reply Record -> SUPABASE
         const replyRecord = {
             user_id: userId,
             name: 'Suporte CryptoFolio',
@@ -90,7 +93,11 @@ export const sendSupportReply = async (originalMessageId: string, replyMessage: 
             created_at: new Date().toISOString()
         };
 
-        await addDoc(collection(db, 'support_messages'), replyRecord);
+        const { error: dbError } = await supabase
+            .from('support_messages')
+            .insert([replyRecord]);
+            
+        if (dbError) throw dbError;
 
         // 2. Prepare Email Content
         const subject = language === 'pt' 
@@ -138,3 +145,4 @@ export const sendSupportReply = async (originalMessageId: string, replyMessage: 
         return false;
     }
 };
+

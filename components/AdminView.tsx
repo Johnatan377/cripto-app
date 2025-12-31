@@ -7,8 +7,6 @@ import {
     Flame, Rocket, Bell, AlertTriangle, ShieldCheck, Heart, Star
 } from 'lucide-react';
 import { fetchAirdrops, createAirdrop, updateAirdrop, deleteAirdrop } from '../services/airdropService';
-import { db } from '../services/firebaseClient';
-import { collection, addDoc, query, where, getDocs } from 'firebase/firestore';
 import { fetchTickerAnnouncements, createTickerAnnouncement, updateTickerAnnouncement, deleteTickerAnnouncement } from '../services/tickerService';
 import { fetchAdminStats, AdminStats } from '../services/adminService';
 import { fetchSupportMessages, markMessageAsRead, deleteSupportMessage, sendSupportReply, SupportMessage } from '../services/messageService';
@@ -36,9 +34,6 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
     const timeoutRef = useRef<any>(null);
     const abortControllerRef = useRef<AbortController | null>(null);
 
-    // MIGRATION DEBUG STATE
-    const [migrationLog, setMigrationLog] = useState<string[]>([]);
-    const [isMigrating, setIsMigrating] = useState(false);
 
 
     // Reply State
@@ -200,18 +195,14 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
             };
 
             const fetchTickerDirect = async () => {
-                const snap = await getDocs(collection(db, 'ticker_announcements'));
-                const data = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })) as TickerAnnouncement[];
-                // Sort
-                data.sort((a, b) => {
-                    const pA = a.priority || 0;
-                    const pB = b.priority || 0;
-                    if (pA !== pB) return pB - pA;
-                    const dateA = a.created_at ? new Date(a.created_at).getTime() : 0;
-                    const dateB = b.created_at ? new Date(b.created_at).getTime() : 0;
-                    return dateB - dateA;
-                });
-                return data;
+                const { data, error } = await supabase
+                    .from('ticker_announcements')
+                    .select('*')
+                    .order('priority', { ascending: false })
+                    .order('created_at', { ascending: false });
+
+                if (error) throw error;
+                return data as TickerAnnouncement[];
             };
 
             const fetchers = [
@@ -381,18 +372,6 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         <p className="text-xs text-white/40 uppercase font-bold mt-1 tracking-widest">Controle total do ecossistema</p>
                     </div>
 
-                    {/* MIGRATION OVERLAY */}
-                    {isMigrating && (
-                        <div className="fixed inset-0 bg-black/90 flex flex-col items-center justify-center z-[100] gap-4 p-8">
-                            <Loader2 size={48} className="text-yellow-400 animate-spin" />
-                            <h2 className="text-2xl font-black text-white">MIGRATING DATA...</h2>
-                            <div className="w-full max-w-2xl bg-white/5 rounded-xl p-4 h-64 overflow-y-auto font-mono text-xs border border-white/10">
-                                {migrationLog.map((log, i) => (
-                                    <div key={i} className="mb-1 text-green-400">{log}</div>
-                                ))}
-                            </div>
-                        </div>
-                    )}
 
                     <div className="flex bg-white/5 p-1 rounded-xl">
                         <button
@@ -423,98 +402,6 @@ const AdminView: React.FC<AdminViewProps> = ({ language, userAccount }) => {
                         </button>
                     </div>
 
-                    <div className="flex bg-white/5 p-1 rounded-xl">
-                        <button
-                            onClick={async () => {
-                                if (!confirm(language === 'pt' ? 'IMPORTANTE: Isso vai copiar dados do Supabase para o Firebase. Continuar?' : 'This will import data from Supabase to Firebase. Continue?')) return;
-
-                                setIsMigrating(true);
-                                setMigrationLog(prev => [...prev, "🚀 Starting Migration Process..."]);
-
-                                try {
-                                    const log = (msg: string) => setMigrationLog(prev => [...prev, `> ${msg}`]);
-
-                                    // 1. Airdrops
-                                    log("Fetching Airdrops from Supabase...");
-                                    const { data: sbAirdrops, error: sbError } = await supabase.from('airdrops').select('*');
-
-                                    if (sbError) throw new Error("Supabase Error: " + sbError.message);
-
-                                    if (sbAirdrops && sbAirdrops.length > 0) {
-                                        log(`Found ${sbAirdrops.length} Airdrops. Migrating to Firebase...`);
-                                        let count = 0;
-                                        for (const item of sbAirdrops) {
-                                            // Check for duplicates
-                                            try {
-                                                const q = query(collection(db, 'airdrops'), where('title_pt', '==', item.title_pt));
-                                                const exists = await getDocs(q);
-                                                if (!exists.empty) {
-                                                    log(`⏩ Skipping duplicate: ${item.title_pt}`);
-                                                    continue;
-                                                }
-                                            } catch (e) { console.warn("Dup check failed", e); }
-
-                                            const { id, ...data } = item;
-                                            await createAirdrop(data as any);
-                                            count++;
-                                            if (count % 5 === 0) log(`... Migrated ${count}/${sbAirdrops.length}`);
-                                        }
-                                        log(`✅ Airdrops Migration Complete! Added ${count} new.`);
-                                    } else {
-                                        log("⚠️ No Airdrops found in Supabase.");
-                                    }
-
-                                    // 2. Ticker
-                                    log("Fetching Ticker Announcements from Supabase...");
-                                    const { data: sbTicker } = await supabase.from('ticker_announcements').select('*');
-                                    if (sbTicker && sbTicker.length > 0) {
-                                        log(`Found ${sbTicker.length} Tickers. Migrating...`);
-                                        for (const item of sbTicker) {
-                                            // Check for duplicate content
-                                            try {
-                                                const q = query(collection(db, 'ticker_announcements'), where('content_pt', '==', item.content_pt));
-                                                const exists = await getDocs(q);
-                                                if (!exists.empty) continue;
-                                            } catch (e) { }
-
-                                            const { id, ...data } = item;
-                                            await createTickerAnnouncement(data as any);
-                                        }
-                                        log("✅ Ticker Migration Complete!");
-                                    } else {
-                                        log("⚠️ No Tickers found in Supabase.");
-                                    }
-
-                                    // 3. Messages
-                                    log("Fetching Messages from Supabase...");
-                                    const { data: sbMessages } = await supabase.from('support_messages').select('*');
-                                    if (sbMessages && sbMessages.length > 0) {
-                                        log(`Found ${sbMessages.length} Messages. Migrating...`);
-                                        for (const item of sbMessages) {
-                                            const { id, ...data } = item;
-                                            await addDoc(collection(db, 'support_messages'), data);
-                                        }
-                                        log("✅ Messages Migration Complete!");
-                                    } else {
-                                        log("⚠️ No Messages found in Supabase.");
-                                    }
-
-                                    log("🎉 ALL DONE! Refreshing page in 3 seconds...");
-                                    setTimeout(() => window.location.reload(), 3000);
-
-                                } catch (err: any) {
-                                    console.error("Migration failed:", err);
-                                    setMigrationLog(prev => [...prev, `❌ ERROR: ${err.message || err}`]);
-                                    alert("Erro na migração. Veja o log na tela.");
-                                } finally {
-                                    // setIsMigrating(false); // Valid to keep it open so user sees log
-                                }
-                            }}
-                            className="px-4 py-2 bg-blue-600/10 border border-blue-600/20 rounded-full text-[10px] font-black uppercase text-blue-500 hover:bg-blue-600 hover:text-white transition-all shadow-[0_0_20px_rgba(37,99,235,0.1)]"
-                        >
-                            Import Old Data
-                        </button>
-                    </div>
 
                 </div>
             </div>

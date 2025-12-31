@@ -1,7 +1,7 @@
 import { UserAccount, UserSettings, Alert, PortfolioItem } from '../types';
 import { supabase } from './supabaseClient';
 import { ADMIN_EMAILS } from '../constants';
-import { getDeviceType } from '../utils/device';
+
 
 /**
  * Conecta com o Google via Supabase OAuth
@@ -247,14 +247,9 @@ export const resetPasswordForEmail = async (email: string) => {
 export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem[], allocations: any[], alerts: Alert[] = []) => {
   if (!userId) return;
 
-  const deviceType = getDeviceType();
-  const portfolioField = deviceType === 'mobile' ? 'portfolio_mobile' : 'portfolio';
-  const allocationsField = deviceType === 'mobile' ? 'allocations_mobile' : 'allocations';
-  
-  // Dynamic object key based on device
   const updateData: any = {
-    [portfolioField]: portfolio,
-    [allocationsField]: allocations,
+    portfolio: portfolio,
+    allocations: allocations,
     alerts: alerts,
     updated_at: new Date().toISOString()
   };
@@ -264,23 +259,28 @@ export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem
     .update(updateData)
     .eq('id', userId);
 
-  if (error) console.error(`Erro ao salvar portfólio (${deviceType}):`, error);
-  else console.log(`[Auth] ✅ Portfólio salvo para ${deviceType}`);
+  if (error) console.error(`Erro ao salvar portfólio:`, error);
+  else {
+    console.log(`[Auth] ✅ Portfólio salvo com sucesso`);
+    // Notificar outras abas
+    if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+      (window as any).notifyOtherTabs('portfolio-update', {
+        portfolio: portfolio,
+        allocations: allocations
+      });
+    }
+  }
 };
 
 /**
  * Carrega o portfólio do usuário da nuvem
  */
 export const loadUserPortfolio = async (userId: string) => {
-  const deviceType = getDeviceType();
-  const portfolioField = deviceType === 'mobile' ? 'portfolio_mobile' : 'portfolio';
-  const allocationsField = deviceType === 'mobile' ? 'allocations_mobile' : 'allocations';
-
-  console.log(`[Auth] 📥 Carregando portfólio para: ${deviceType}`);
+  console.log(`[Auth] 📥 Carregando portfólio...`);
 
   const { data, error } = await supabase
     .from('profiles')
-    .select(`${portfolioField}, ${allocationsField}, alerts`)
+    .select('portfolio, allocations, alerts')
     .eq('id', userId)
     .single();
 
@@ -290,8 +290,8 @@ export const loadUserPortfolio = async (userId: string) => {
   }
   
   return {
-    portfolio: data[portfolioField] || [],
-    allocations: data[allocationsField] || [],
+    portfolio: data.portfolio || [],
+    allocations: data.allocations || [],
     alerts: data.alerts || []
   };
 };
