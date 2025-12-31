@@ -999,6 +999,9 @@ const App: React.FC = () => {
 
     console.log('[Polling] 🔄 Iniciando verificação automática a cada 10s');
 
+    const isMobile = window.innerWidth < 768;
+    const pollingInterval = isMobile ? 5000 : 10000;
+
     const interval = setInterval(async () => {
       try {
         const { data } = await supabase
@@ -1038,7 +1041,7 @@ const App: React.FC = () => {
       } catch (error) {
         console.error('[Polling] ❌ Erro ao verificar mudanças:', error);
       }
-    }, 10000); // A cada 10 segundos
+    }, pollingInterval);
 
     return () => {
       console.log('[Polling] 🛑 Parando verificação automática');
@@ -1394,6 +1397,32 @@ const App: React.FC = () => {
       console.log('[Delete] ✅ Deletado e salvo.');
     }
   };
+  const handleThemeChange = async (newTheme: any) => {
+    // Atualizar estado local
+    const newSettings = { ...settings, theme: newTheme };
+    setSettings(newSettings);
+    localStorage.setItem('settings', JSON.stringify(newSettings));
+
+    // ADICIONAR: Salvar no banco IMEDIATAMENTE
+    if (userAccount?.id) {
+      console.log('[Theme] 💾 Salvando tema no banco:', newTheme);
+
+      const { error } = await supabase
+        .from('profiles')
+        .update({
+          theme: newTheme,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', userAccount.id);
+
+      if (error) {
+        console.error('[Theme] ❌ Erro ao salvar tema:', error);
+      } else {
+        console.log('[Theme] ✅ Tema salvo com sucesso');
+      }
+    }
+  };
+
 
   const handleLogout = async () => {
     console.log('[App] Fazendo logout...');
@@ -1506,7 +1535,7 @@ const App: React.FC = () => {
                     <div className="grid grid-cols-2 gap-2 p-2 bg-white/5 rounded-xl ml-4">
                       {/* Filter themes to only: OLED (black), Light (white), Yellow, Matrix */}
                       {(['black', 'white', 'yellow', 'matrix'] as AppTheme[]).map(t => (
-                        <button key={t} onClick={() => setSettings(s => ({ ...s, theme: t }))} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
+                        <button key={t} onClick={() => handleThemeChange(t)} className={`p-2 text-[10px] font-bold uppercase rounded-lg border transition-all ${settings.theme === t ? 'bg-yellow-400 border-yellow-400 text-black' : `bg-black border-white/10 text-white`}`}>{TRANSLATIONS[settings.language].themes[t] || t}</button>
                       ))}
                     </div>
                   )}
@@ -1521,7 +1550,7 @@ const App: React.FC = () => {
                     </div>
                   )}
                   <button onClick={() => setSettings(s => ({ ...s, language: s.language === 'pt' ? 'en' : 'pt' }))} className={`w-full flex items-center gap-4 p-3 text-xs uppercase font-bold rounded-xl transition-all text-white/40 hover:text-white`}>
-                    <Globe size={18} /> {settings.language === 'pt' ? 'EN' : 'PT'}
+                    <Globe size={18} /> {settings.language === 'pt' ? 'PT' : 'EN'}
                   </button>
                 </div>
               )}
@@ -1668,11 +1697,9 @@ const App: React.FC = () => {
                     <div className="absolute top-full right-0 mt-2 w-40 bg-neutral-900 border border-neutral-800 rounded-xl shadow-2xl py-2 z-[200] animate-in slide-in-from-top-2 duration-200">
                       <button
                         onClick={() => {
-                          setSettings(s => {
-                            const newSettings: UserSettings = { ...s, language: 'pt' };
-                            if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
-                            return newSettings;
-                          });
+                          const newSettings: UserSettings = { ...settings, language: 'pt' };
+                          setSettings(newSettings);
+                          if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
                           setIsLanguageMenuOpen(false);
                         }}
                         className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'pt' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
@@ -1682,11 +1709,9 @@ const App: React.FC = () => {
                       </button>
                       <button
                         onClick={() => {
-                          setSettings(s => {
-                            const newSettings: UserSettings = { ...s, language: 'en' };
-                            if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
-                            return newSettings;
-                          });
+                          const newSettings: UserSettings = { ...settings, language: 'en' };
+                          setSettings(newSettings);
+                          if (userAccount?.id) updateUserProfile(userAccount.id, newSettings);
                           setIsLanguageMenuOpen(false);
                         }}
                         className={`w-full px-4 py-2 text-left text-xs font-bold transition-colors flex items-center gap-2 ${settings.language === 'en' ? 'text-cyan-400 bg-white/5' : 'text-white/60 hover:text-white hover:bg-white/5'}`}
