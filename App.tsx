@@ -36,7 +36,7 @@ import AirdropScreen from './components/AirdropScreen';
 import CoinDetailModal from './components/CoinDetailModal';
 import SupportView from './components/SupportView';
 import AdminView from './components/AdminView';
-import InstallApp from './src/pages/InstallApp';
+
 
 
 /** COMPONENTES DE FUNDO DINÂMICOS **/
@@ -1638,11 +1638,6 @@ const App: React.FC = () => {
   }, []);
 
   const isAtLimit = settings.tier === 'free' && portfolioItems.length >= 3;
-
-  // Simple Router for Install Page
-  if (typeof window !== 'undefined' && window.location.pathname === '/install') {
-    return <InstallApp />;
-  }
 
   if (!userAccount) {
     return (
