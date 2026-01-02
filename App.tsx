@@ -1011,7 +1011,12 @@ const App: React.FC = () => {
 
   const [portfolioItems, setPortfolioItems] = useState<PortfolioItem[]>(() => {
     const saved = localStorage.getItem('portfolio');
-    return saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
+    const items = saved ? JSON.parse(saved) : INITIAL_PORTFOLIO_ITEMS;
+    // Migration: Ensure all items have a unique ID to prevent key duplicates
+    return items.map((i: any) => ({
+      ...i,
+      id: i.id || Math.random().toString(36).substring(2, 9) + Date.now().toString(36)
+    }));
   });
 
   // Ref for Portfolio to access in Realtime Listener (Fix for disappearing assets)
@@ -1424,7 +1429,7 @@ const App: React.FC = () => {
       const currentVal = coin.current_price * item.quantity;
       const cost = (item.buyPrice || 0) * item.quantity;
       return {
-        ...coin, id: item.assetId, name: item.name || item.assetId, quantity: item.quantity, buyPrice: item.buyPrice || 0,
+        ...coin, id: item.id || item.assetId, name: item.name || item.assetId, quantity: item.quantity, buyPrice: item.buyPrice || 0,
         totalValue: currentVal, totalCost: cost, pnlValue: currentVal - cost,
         pnlPercentage: cost > 0 ? ((currentVal - cost) / cost) * 100 : 0,
         allocation: totalVal > 0 ? (currentVal / totalVal) * 100 : 0
@@ -1447,6 +1452,7 @@ const App: React.FC = () => {
 
     // Create new item
     const newItem = {
+      id: crypto.randomUUID(),
       assetId: selectedCoin.id,
       quantity: qty,
       buyPrice: bp,
@@ -1497,7 +1503,7 @@ const App: React.FC = () => {
 
     // 1. Calculate updated list
     const updatedPortfolio = portfolioItems.map(item => {
-      if (item.assetId === editingAssetId) {
+      if (item.id === editingAssetId) {
         return { ...item, quantity: qty, buyPrice: bp };
       }
       return item;
@@ -1541,7 +1547,7 @@ const App: React.FC = () => {
     console.log('[Delete] 🗑️ Removing asset:', id);
 
     // 1. Update State
-    const updated = portfolioItems.filter(p => p.assetId !== id);
+    const updated = portfolioItems.filter(p => p.id !== id);
     console.log('[Delete] Portfolio before:', portfolioItems.length);
     console.log('[Delete] Portfolio after:', updated.length);
 

@@ -247,9 +247,11 @@ export const resetPasswordForEmail = async (email: string) => {
 export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem[], allocations: any[], alerts: Alert[] = []) => {
   if (!userId) return;
 
+  // 1. Save Alerts to profiles (Legacy - keeping alerts in JSON for now as per plan focus on Tracking)
+  // We remove 'allocations' from here to stop saving it to JSON
   const updateData: any = {
-    portfolio: portfolio,
-    allocations: allocations,
+    // portfolio: portfolio, // Already removed
+    // allocations: allocations, // REMOVED: Now managed in separate table
     alerts: alerts,
     updated_at: new Date().toISOString()
   };
@@ -259,16 +261,63 @@ export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem
     .update(updateData)
     .eq('id', userId);
 
-  if (error) console.error(`Erro ao salvar portfólio:`, error);
-  else {
-    console.log(`[Auth] ✅ Portfólio salvo com sucesso`);
-    // Notificar outras abas
-    if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
-      (window as any).notifyOtherTabs('portfolio-update', {
-        portfolio: portfolio,
-        allocations: allocations
-      });
-    }
+  if (error) console.error(`Erro ao salvar profiles (legacy):`, error);
+
+  // 2. Save Portfolio to portfolio_assets (New Relational Table)
+  console.log(`[Auth] 💾 Tentando salvar ${portfolio.length} ativos para user: ${userId}`);
+  
+  // Strategy: Delete All + Insert All (Prevents ghosts/zombies)
+  const { error: delError } = await supabase.from('portfolio_assets').delete().eq('user_id', userId);
+  if (delError) {
+      console.error("❌ ERRO CRÍTICO ao limpar portfolio_assets:", delError);
+  }
+
+  if (portfolio.length > 0) {
+      const portfolioRows = portfolio.map(item => ({
+          user_id: userId,
+          asset_id: item.assetId, // Fixed column name
+          amount: item.quantity,
+          purchase_price: item.buyPrice,
+          name: item.name
+      }));
+      
+      const { error: insError } = await supabase.from('portfolio_assets').insert(portfolioRows);
+      if (insError) {
+          console.error("❌ ERRO CRÍTICO ao inserir portfolio_assets:", insError);
+      }
+  }
+
+  // 3. Save Allocations to allocation_logs (New Relational Table)
+  // Deleting old logs to prevent duplicates (Sync Strategy)
+  const { error: delAllocError } = await supabase.from('allocation_logs').delete().eq('user_id', userId);
+    
+  if (allocations.length > 0) {
+    const allocationRows = allocations.map(log => ({
+      user_id: userId,
+      coin: log.moeda,
+      protocol: log.nomeProtocolo,
+      wallet_address: log.wallet,
+      protocol_url: log.protocolUrl,
+      notes: log.categoria, 
+      amount: log.quantidade, // Mapped correctly
+      amount2: log.quantidade2, // Optional support
+      created_at: log.timestamp ? new Date(log.timestamp).toISOString() : new Date().toISOString()
+    }));
+
+    const { error: insAllocError } = await supabase.from('allocation_logs').insert(allocationRows);
+     if (insAllocError) {
+          console.error("❌ ERRO CRÍTICO ao inserir allocation_logs:", insAllocError);
+      }
+  }
+
+  console.log(`[Auth] ✅ Portfólio e Alocações (Tabelas) salvos com sucesso`);
+  
+  // Notificar outras abas
+  if (typeof window !== 'undefined' && (window as any).notifyOtherTabs) {
+    (window as any).notifyOtherTabs('portfolio-update', {
+      portfolio: portfolio,
+      allocations: allocations
+    });
   }
 };
 
@@ -276,22 +325,65 @@ export const saveUserPortfolio = async (userId: string, portfolio: PortfolioItem
  * Carrega o portfólio do usuário da nuvem
  */
 export const loadUserPortfolio = async (userId: string) => {
-  console.log(`[Auth] 📥 Carregando portfólio...`);
+  console.log(`[Auth] 📥 Carregando portfólio (Relacional Completo)...`);
 
-  const { data, error } = await supabase
-    .from('profiles')
-    .select('portfolio, allocations, alerts')
-    .eq('id', userId)
-    .single();
+  // Parallel Fetch: Profiles (Alerts), PortfolioAssets (Table), AllocationLogs (Table)
+  const [profileResult, assetsResult, allocationsResult] = await Promise.all([
+      supabase.from('profiles').select('alerts').eq('id', userId).single(),
+      supabase.from('portfolio_assets').select('*').eq('user_id', userId),
+      supabase.from('allocation_logs').select('*').eq('user_id', userId)
+  ]);
 
-  if (error) {
-    console.error("Erro ao carregar portfólio:", error);
-    return null;
-  }
+  const profileData = profileResult.data;
+  const assetsData = assetsResult.data || [];
+  const allocationsData = allocationsResult.data || [];
   
+  console.log(`[Auth] 🔍 Resultado do Load:`, {
+      userId,
+      assets: assetsData.length,
+      allocations: allocationsData.length
+  });
+
+  // Adapter: Convert Table Rows -> PortfolioItem[]
+  const portfolio: PortfolioItem[] = assetsData.map((row: any) => ({
+      id: row.id, 
+      assetId: row.asset_id || row.symbol, // Fallback for old rows
+      quantity: row.amount,
+      buyPrice: row.purchase_price,
+      name: row.name,
+      buyDate: row.created_at
+  }));
+
+  // Color Mapping (Must match AllocationTypeView.tsx)
+  const CATEGORY_COLORS: Record<string, string> = {
+    'Pool de Liquidez': '#22c55e', // Green (Updated)
+    'Empréstimo': '#facc15',       // Yellow
+    'DeFi de Stable': '#06b6d4',   // Cyan
+    'Staker': '#d946ef',           // Purple (Updated)
+    'Corretoras': '#ec4899',       // Pink
+    'Protocolos da Airdrop': '#3b82f6', // Blue
+    'Prediction Market': '#f97316', // Orange
+    'PerpDex': '#ef4444',          // Red
+    'Outros': '#94a3b8'            // Slate
+  };
+
+  // Adapter: Convert Table Rows -> MissionLog[]
+  const allocations = allocationsData.map((row: any) => ({
+      id: row.id,
+      moeda: row.coin || '?', // Fallback
+      nomeProtocolo: row.protocol || 'Unknown',
+      wallet: row.wallet_address || '',
+      categoria: row.notes || 'Outros', 
+      protocolUrl: row.protocol_url,
+      timestamp: new Date(row.created_at).getTime(),
+      quantidade: Number(row.amount) || 0,
+      quantidade2: Number(row.amount2) || 0,
+      color: CATEGORY_COLORS[row.notes] || '#fff' // Assign color based on category
+  }));
+
   return {
-    portfolio: data.portfolio || [],
-    allocations: data.allocations || [],
-    alerts: data.alerts || []
+    portfolio: portfolio,
+    allocations: allocations,
+    alerts: profileData?.alerts || []
   };
 };

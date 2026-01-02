@@ -45,6 +45,7 @@ export interface Alert {
 }
 
 export interface PortfolioItem {
+  id?: string;
   assetId: string;
   quantity: number;
   buyPrice?: number;

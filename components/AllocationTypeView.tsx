@@ -14,10 +14,10 @@ interface AllocationItem {
 
 
 const CATEGORIES: AllocationItem[] = [
-  { name: 'Pool de Liquidez', value: 0, color: '#d946ef' }, // Neon Purple
+  { name: 'Pool de Liquidez', value: 0, color: '#22c55e' }, // Neon Green (User Request)
   { name: 'Empréstimo', value: 0, color: '#facc15' },      // Neon Yellow
   { name: 'DeFi de Stable', value: 0, color: '#06b6d4' },  // Neon Cyan
-  { name: 'Staker', value: 0, color: '#22c55e' },         // Neon Green
+  { name: 'Staker', value: 0, color: '#d946ef' },         // Neon Purple (Swapped with Pool)
   { name: 'Corretoras', value: 0, color: '#ec4899' },     // Neon Pink
   { name: 'Protocolos da Airdrop', value: 0, color: '#3b82f6' }, // Bright Blue
   { name: 'Prediction Market', value: 0, color: '#f97316' }, // Neon Orange
