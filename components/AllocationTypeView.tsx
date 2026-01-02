@@ -35,9 +35,12 @@ const AllocationTypeView: React.FC<{
   onLogsChange?: (logs: MissionLog[]) => void;
   externalLogs?: MissionLog[];
   language?: 'pt' | 'en';
-}> = ({ totalBalance, currencySymbol, privacyMode, onCountChange, onLimitReached, isPremium = false, onLogsChange, externalLogs, language = 'pt' }) => {
+  theme?: string;
+}> = ({ totalBalance, currencySymbol, privacyMode, onCountChange, onLimitReached, isPremium = false, onLogsChange, externalLogs, language = 'pt', theme = 'dark' }) => {
   const t = TRANSLATIONS[language].allocation;
   const g = TRANSLATIONS[language].general;
+
+  const isYellow = theme === 'yellow';
 
   const [categoria, setCategoria] = useState("");
   const [moeda, setMoeda] = useState("");
@@ -173,16 +176,16 @@ const AllocationTypeView: React.FC<{
   const isPoolSelected = categoria === 'Pool de Liquidez' || categoria === 'Empréstimo';
 
   return (
-    <div className="bg-black min-h-[calc(100vh-160px)] -mx-4 -mt-4 px-4 pt-8 pb-32 animate-in fade-in duration-500 relative z-10 overflow-x-hidden">
+    <div className={`min-h-[calc(100vh-160px)] -mx-4 -mt-4 px-4 pt-8 pb-32 animate-in fade-in duration-500 relative z-10 overflow-x-hidden ${isYellow ? 'bg-[#ca8a04]' : 'bg-black'}`}>
 
       <div className="text-center mb-8">
-        <h2 className="text-sm font-black uppercase text-yellow-400 drop-shadow-[0_0_8px_rgba(255,255,0,0.6)] tracking-tighter md:hidden">{t.title}</h2>
+        <h2 className={`text-sm font-black uppercase drop-shadow-[0_0_8px_rgba(255,255,0,0.6)] tracking-tighter md:hidden ${isYellow ? 'text-black' : 'text-yellow-400'}`}>{t.title}</h2>
         <div className="h-0.5 w-12 bg-blue-600 mx-auto mt-2 shadow-[0_0_10px_#2121ff] md:hidden"></div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-[350px_1fr] gap-8 px-4">
         {/* Gráfico de Missões - Contador Numérico */}
-        <div className="w-full h-96 relative flex items-center justify-center bg-zinc-950/30 rounded-[40px] border-2 border-zinc-900 shadow-inner p-2 overflow-hidden mb-0 md:col-start-2">
+        <div className={`w-full h-96 relative flex items-center justify-center rounded-[40px] border-2 border-zinc-900 shadow-inner p-2 overflow-hidden mb-0 md:col-start-2 ${isYellow ? 'bg-black' : 'bg-zinc-950/30'}`}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
               <Pie
@@ -217,7 +220,7 @@ const AllocationTypeView: React.FC<{
         {/* Left Column: Form */}
         <div className="w-full md:w-auto shrink-0 md:col-start-1 md:row-start-1 md:row-span-2">
           <div className="flex items-center justify-between mb-4 border-l-4 border-cyan-400 pl-3">
-            <h3 className="text-[10px] font-black uppercase text-white tracking-widest">{t.register_entry}</h3>
+            <h3 className={`text-[10px] font-black uppercase tracking-widest ${isYellow ? 'text-black' : 'text-white'}`}>{t.register_entry}</h3>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => setIsFormMinimized(true)}
@@ -234,7 +237,7 @@ const AllocationTypeView: React.FC<{
             </div>
           </div>
 
-          <div className="bg-zinc-900/40 border-2 border-blue-600 rounded-[32px] p-6 space-y-5 shadow-[0_0_30px_rgba(33,33,255,0.15)] sticky top-24">
+          <div className={`border-2 border-blue-600 rounded-[32px] p-6 space-y-5 shadow-[0_0_30px_rgba(33,33,255,0.15)] sticky top-24 ${isYellow ? 'bg-black shadow-2xl' : 'bg-zinc-900/40'}`}>
             <div className="space-y-2">
               <div className="flex items-center gap-2 ml-1">
                 <Target size={14} className="text-white/60" />
@@ -266,7 +269,7 @@ const AllocationTypeView: React.FC<{
                     <div className="flex items-center gap-2 ml-1">
                       <Coins size={14} className="text-white/60" />
                       <label className="text-xs font-bold text-white uppercase">
-                        {categoria === 'Empréstimo' ? 'LEND' : (isPoolSelected ? 'Moeda A' : 'Moeda')}
+                        {categoria === 'Empréstimo' ? 'LEND' : (isPoolSelected ? (language === 'pt' ? 'Moeda A' : 'Coin A') : (language === 'pt' ? 'Moeda' : 'Coin'))}
                       </label>
                     </div>
                     <input
@@ -279,7 +282,7 @@ const AllocationTypeView: React.FC<{
                   </div>
                   <div className="space-y-2">
                     <div className="flex items-center gap-2 justify-end mr-1">
-                      <label className="text-xs font-bold text-white uppercase">{g.quantity.substring(0, 5)}.</label>
+                      <label className="text-xs font-bold text-white uppercase">{language === 'pt' ? 'QUANT.' : 'QTY.'}</label>
                       <Zap size={14} className="text-white/60" />
                     </div>
                     <input
@@ -298,7 +301,7 @@ const AllocationTypeView: React.FC<{
                       <div className="flex items-center gap-2 ml-1">
                         <Coins size={14} className="text-white/60" />
                         <label className="text-xs font-bold text-white uppercase">
-                          {categoria === 'Empréstimo' ? 'BORROW' : 'Moeda B (Opcional)'}
+                          {categoria === 'Empréstimo' ? 'BORROW' : (language === 'pt' ? 'Moeda B (Opcional)' : 'Coin B (Optional)')}
                         </label>
                       </div>
                       <input
@@ -311,7 +314,7 @@ const AllocationTypeView: React.FC<{
                     </div>
                     <div className="space-y-2">
                       <div className="flex items-center gap-2 justify-end mr-1">
-                        <label className="text-xs font-bold text-white uppercase">{g.quantity.substring(0, 5)}.</label>
+                        <label className="text-xs font-bold text-white uppercase">{language === 'pt' ? 'QUANT.' : 'QTY.'}</label>
                         <Plus size={14} className="text-white/60" />
                       </div>
                       <input
@@ -382,22 +385,22 @@ const AllocationTypeView: React.FC<{
         {/* Right Column: Mission Inventory (Grid) */}
         <div className="flex-1 md:col-start-2">
           <div className="flex items-center justify-between mb-4 border-l-4 border-yellow-400 pl-3 pr-2">
-            <h3 className="text-[10px] font-black uppercase text-white tracking-widest">{t.mission_inventory}</h3>
-            <span className="text-[8px] font-black text-yellow-400/50 uppercase">{logs.length} {t.slots}</span>
+            <h3 className={`text-[10px] font-black uppercase tracking-widest ${isYellow ? 'text-black' : 'text-white'}`}>{t.mission_inventory}</h3>
+            <span className={`text-[8px] font-black uppercase ${isYellow ? 'text-black/50' : 'text-yellow-400/50'}`}>{logs.length} {t.slots}</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {logs.length === 0 ? (
-              <div className="col-span-full py-12 border-2 border-dashed border-zinc-800 rounded-3xl flex flex-col items-center justify-center gap-3 opacity-30">
-                <LayoutGrid size={24} className="text-white" />
-                <p className="text-[6px] font-black text-white uppercase tracking-widest">{t.no_active_missions}</p>
+              <div className={`col-span-full py-12 border-2 border-dashed rounded-3xl flex flex-col items-center justify-center gap-3 opacity-30 ${isYellow ? 'border-black' : 'border-zinc-800'}`}>
+                <LayoutGrid size={24} className={isYellow ? 'text-black' : 'text-white'} />
+                <p className={`text-[6px] font-black uppercase tracking-widest ${isYellow ? 'text-black' : 'text-white'}`}>{t.no_active_missions}</p>
               </div>
             ) : (
               logs.map((log) => (
                 <div
                   key={log.id}
                   onClick={() => setSelectedLog(log)}
-                  className="relative bg-zinc-950 border-l-8 rounded-xl p-4 shadow-[4px_4px_15px_rgba(0,0,0,0.5)] animate-in slide-in-from-right duration-300 overflow-hidden cursor-pointer active:scale-95 transition-transform h-full flex flex-col justify-between"
+                  className={`relative border-l-8 rounded-xl p-4 shadow-[4px_4px_15px_rgba(0,0,0,0.5)] animate-in slide-in-from-right duration-300 overflow-hidden cursor-pointer active:scale-95 transition-transform h-full flex flex-col justify-between ${isYellow ? 'bg-black' : 'bg-zinc-950'}`}
                   style={{ borderLeftColor: log.color, borderRight: `1px solid ${log.color}20`, borderTop: `1px solid ${log.color}20`, borderBottom: `1px solid ${log.color}20` }}
                 >
                   <div className="absolute top-0 right-0 w-20 h-20 opacity-[0.05] rounded-full blur-2xl" style={{ backgroundColor: log.color }}></div>
@@ -468,7 +471,7 @@ const AllocationTypeView: React.FC<{
             <div className="absolute inset-0" onClick={() => setSelectedLog(null)}></div>
 
             <div
-              className="relative w-full max-w-sm bg-zinc-900 border-4 rounded-3xl overflow-hidden shadow-[0_0_80px_rgba(0,0,0,1)] animate-in slide-in-from-bottom-20 duration-500"
+              className={`relative w-full max-w-sm border-4 rounded-3xl overflow-hidden shadow-[0_0_80px_rgba(0,0,0,1)] animate-in slide-in-from-bottom-20 duration-500 ${isYellow ? 'bg-black' : 'bg-zinc-900'}`}
               style={{ borderColor: selectedLog.color }}
             >
               <div className="flex items-center justify-between p-4 border-b-4 bg-black/40" style={{ borderColor: `${selectedLog.color}40` }}>

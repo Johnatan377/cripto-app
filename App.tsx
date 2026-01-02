@@ -1856,6 +1856,29 @@ const App: React.FC = () => {
               {/* X Social Link Removed */}
             </div>
 
+            {/* Desktop Admin Ticker (Inserted in Header) */}
+            <div className="hidden md:flex flex-1 mx-8 overflow-hidden relative h-10 items-center">
+              <div className="flex items-center animate-marquee hover:pause whitespace-nowrap w-full" style={{ animationDuration: '45s' }}>
+                {announcements.map((ann, index) => (
+                  <div key={'header_ann_' + index} className="flex items-center gap-2 px-4 py-1 mx-4 font-black whitespace-nowrap bg-yellow-400 text-black rounded-full shadow-[0_0_10px_rgba(250,204,21,0.4)] border border-yellow-500/50 hover:scale-105 transition-transform cursor-default">
+                    {ann.icon && <TickerIcon name={ann.icon} size={16} />}
+                    <span className="uppercase text-[10px] tracking-wide">
+                      {settings.language === 'pt' ? ann.content_pt : ann.content_en}
+                    </span>
+                  </div>
+                ))}
+                {/* Duplicate for smooth loop */}
+                {announcements.map((ann, index) => (
+                  <div key={'header_ann_copy_' + index} className="flex items-center gap-2 px-4 py-1 mx-4 font-black whitespace-nowrap bg-yellow-400 text-black rounded-full shadow-[0_0_10px_rgba(250,204,21,0.4)] border border-yellow-500/50 hover:scale-105 transition-transform cursor-default">
+                    {ann.icon && <TickerIcon name={ann.icon} size={16} />}
+                    <span className="uppercase text-[10px] tracking-wide">
+                      {settings.language === 'pt' ? ann.content_pt : ann.content_en}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
 
 
             <div className="flex items-center gap-4">
@@ -1948,67 +1971,11 @@ const App: React.FC = () => {
 
           {/* Top Black Bar (Desktop & Mobile) - "Roda Teto" + Ticker */}
           <div className="w-full h-auto md:h-24 bg-black flex-none border-b border-white/5 z-30 shrink-0 flex flex-col md:flex-row items-center overflow-hidden relative">
-
-            {/* Coins Row */}
-            <div className="w-full h-10 md:h-full flex items-center relative overflow-hidden">
-              <div
-                className="flex items-center animate-marquee hover:pause whitespace-nowrap"
-                style={{ animationDuration: window.innerWidth < 768 ? '120s' : '150s' }}
-              >
-                {tickerData.map((coin, index) => (
-                  <div key={coin.id + index} className="flex items-center gap-3 mx-8 md:mx-12 font-bold whitespace-nowrap">
-                    {coin.image && <img src={coin.image} alt={coin.symbol} className="w-5 h-5 md:w-8 md:h-8 rounded-full" />}
-                    <span className="uppercase text-white/50 text-[10px] md:text-sm">{coin.symbol}</span>
-                    <span className="text-white text-xs md:text-lg">${formatTickerPrice(coin.current_price)}</span>
-                    <span className={`text-[10px] md:text-sm ${coin.price_change_percentage_24h >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
-                      {coin.price_change_percentage_24h >= 0 ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h).toFixed(2)}%
-                    </span>
-                  </div>
-                ))}
-
-                {/* Announcements (Desktop Only - integrated in main flow) */}
-                <div className="hidden md:flex items-center">
-                  {announcements.map((ann, index) => (
-                    <div key={ann.id + index + '_desktop'} className="flex items-center gap-3 px-6 py-2 mx-6 font-black whitespace-nowrap bg-yellow-400 text-black rounded-full shadow-[0_0_15px_rgba(250,204,21,0.3)] border border-yellow-500/50">
-                      {ann.icon && <TickerIcon name={ann.icon} size={18} />}
-                      <span className="uppercase text-xs tracking-tighter">
-                        {settings.language === 'pt' ? ann.content_pt : ann.content_en}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Loop continuation for coins */}
-                {tickerData.map((coin, index) => (
-                  <div key={coin.id + index + '_copy'} className="flex items-center gap-3 mx-8 md:mx-12 font-bold whitespace-nowrap">
-                    {coin.image && <img src={coin.image} alt={coin.symbol} className="w-5 h-5 md:w-8 md:h-8 rounded-full" />}
-                    <span className="uppercase text-white/50 text-[10px] md:text-sm">{coin.symbol}</span>
-                    <span className="text-white text-xs md:text-lg">${formatTickerPrice(coin.current_price)}</span>
-                    <span className={`text-[10px] md:text-sm ${coin.price_change_percentage_24h >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
-                      {coin.price_change_percentage_24h >= 0 ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h).toFixed(2)}%
-                    </span>
-                  </div>
-                ))}
-
-                {/* Announcements Loop Copy (Desktop Only) */}
-                <div className="hidden md:flex items-center">
-                  {announcements.map((ann, index) => (
-                    <div key={ann.id + index + '_desktop_copy'} className="flex items-center gap-3 px-6 py-2 mx-6 font-black whitespace-nowrap bg-yellow-400 text-black rounded-full shadow-[0_0_15px_rgba(250,204,21,0.3)] border border-yellow-500/50">
-                      {ann.icon && <TickerIcon name={ann.icon} size={18} />}
-                      <span className="uppercase text-xs tracking-tighter">
-                        {settings.language === 'pt' ? ann.content_pt : ann.content_en}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Announcements Row - Independent on Mobile, Unified on Desktop */}
+            {/* Announcements Row - Independent on Mobile (MOVED TO TOP) */}
             <div className="w-full h-10 md:h-full flex items-center relative overflow-hidden md:hidden">
               <div
                 className="flex items-center animate-marquee hover:pause whitespace-nowrap"
-                style={{ animationDuration: '100s' }}
+                style={{ animationDuration: '30s' }}
               >
                 {announcements.map((ann, index) => (
                   <div key={ann.id + index} className="flex items-center gap-2 px-4 py-1.5 mx-3 font-black whitespace-nowrap bg-yellow-400 text-black rounded-full shadow-[0_0_10px_rgba(250,204,21,0.2)] border border-yellow-500/50">
@@ -2030,7 +1997,38 @@ const App: React.FC = () => {
               </div>
             </div>
 
-            {/* Desktop View Integrated */}
+            {/* Coins Row */}
+            <div className="w-full h-10 md:h-full flex items-center relative overflow-hidden">
+              <div
+                className="flex items-center animate-marquee hover:pause whitespace-nowrap"
+                style={{ animationDuration: window.innerWidth < 768 ? '120s' : '150s' }}
+              >
+
+                {tickerData.map((coin, index) => (
+                  <div key={coin.id + index} className="flex items-center gap-3 mx-8 md:mx-12 font-bold whitespace-nowrap">
+                    {coin.image && <img src={coin.image} alt={coin.symbol} className="w-5 h-5 md:w-8 md:h-8 rounded-full" />}
+                    <span className="uppercase text-white/50 text-[10px] md:text-sm">{coin.symbol}</span>
+                    <span className="text-white text-xs md:text-lg">${formatTickerPrice(coin.current_price)}</span>
+                    <span className={`text-[10px] md:text-sm ${coin.price_change_percentage_24h >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
+                      {coin.price_change_percentage_24h >= 0 ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h).toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+
+                {/* Loop continuation for coins */}
+                {tickerData.map((coin, index) => (
+                  <div key={coin.id + index + '_copy'} className="flex items-center gap-3 mx-8 md:mx-12 font-bold whitespace-nowrap">
+                    {coin.image && <img src={coin.image} alt={coin.symbol} className="w-5 h-5 md:w-8 md:h-8 rounded-full" />}
+                    <span className="uppercase text-white/50 text-[10px] md:text-sm">{coin.symbol}</span>
+                    <span className="text-white text-xs md:text-lg">${formatTickerPrice(coin.current_price)}</span>
+                    <span className={`text-[10px] md:text-sm ${coin.price_change_percentage_24h >= 0 ? 'text-green-400' : 'text-rose-400'}`}>
+                      {coin.price_change_percentage_24h >= 0 ? '▲' : '▼'} {Math.abs(coin.price_change_percentage_24h).toFixed(2)}%
+                    </span>
+                  </div>
+                ))}
+
+              </div>
+            </div>
           </div>
 
           <main className="flex-1 overflow-y-auto px-4 pt-4 pb-4 custom-scrollbar relative z-[40]">
@@ -2141,6 +2139,7 @@ const App: React.FC = () => {
                 onLogsChange={setAllocationLogs}
                 externalLogs={allocationLogs}
                 language={settings.language}
+                theme={settings.theme}
               />
             )}
           </main>

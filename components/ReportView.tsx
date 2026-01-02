@@ -177,15 +177,30 @@ const ReportView: React.FC<ReportViewProps> = ({ language, theme, portfolioItems
         }
     };
 
+    const isYellow = theme === 'yellow';
+
     const getThemeClasses = () => {
+        if (isYellow) {
+            return {
+                container: 'bg-black/90 border-black/20', // Not used directly in main overlay, but if needed
+                card: 'bg-black border-black shadow-[0_4px_20px_rgba(0,0,0,0.5)]',
+                header: 'text-black', // Title on Yellow BG should be black or white? Photo shows Black Header Bar? No, Photo 1 shows Yellow Background Main, and the "Customer Support" (or similar) box is Black. The top bar is black.
+                // Re-reading usage: 
+                // Header Section is distinct from Email Delivery Function.
+                // User said: "report crypto page... table of register in color black"
+                // The "Header Section" (PDF Report / Generation) -> Let's make it Black too to match "Table of Register".
+                headerTitle: 'text-white',
+                text: 'text-white',
+                button: 'bg-white text-black hover:bg-zinc-200 font-bold'
+            };
+        }
         if (isGame) {
             return {
                 container: 'bg-blue-900/10 border-blue-500/30 text-blue-400',
                 card: 'bg-black/60 border-blue-500/50',
                 header: 'text-yellow-400 font-arcade',
-                tableHeader: 'text-blue-500',
+                headerTitle: 'text-yellow-400',
                 text: 'text-blue-300',
-                highlight: 'text-yellow-400',
                 button: 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_4px_0_0_#1e3a8a] active:translate-y-1 active:shadow-none'
             };
         }
@@ -193,9 +208,8 @@ const ReportView: React.FC<ReportViewProps> = ({ language, theme, portfolioItems
             container: 'bg-zinc-900/30 border-zinc-800 text-zinc-300',
             card: 'bg-zinc-900 border-zinc-700',
             header: 'text-white font-sans',
-            tableHeader: 'text-zinc-500',
+            headerTitle: 'text-white',
             text: 'text-zinc-300',
-            highlight: 'text-white',
             button: 'bg-white text-black hover:bg-zinc-200'
         };
     };
@@ -204,29 +218,29 @@ const ReportView: React.FC<ReportViewProps> = ({ language, theme, portfolioItems
 
     return (
         <div className={`relative min-h-screen w-full pb-32`}>
-            {/* FORCE BLACK BACKGROUND OVERLAY - HIGH Z-INDEX TO COVER APP THEME */}
-            <div className="absolute inset-0 bg-black z-40"></div>
+            {/* FORCE BACKGROUND OVERLAY */}
+            <div className={`absolute inset-0 z-40 ${isYellow ? 'bg-[#ca8a04]' : 'bg-black'}`}></div>
 
-            {/* CONTENT CONTAINER - HIGHER Z-INDEX TO SIT ON TOP OF BLACK OVERLAY */}
+            {/* CONTENT CONTAINER */}
             <div className="relative z-50 flex flex-col gap-8 animate-in slide-in-from-bottom-4 duration-500 max-w-2xl mx-auto w-full pt-6 px-4">
 
                 {/* Header Section */}
-                <div className={`p-6 rounded-3xl border opacity-80 border-zinc-800 bg-zinc-900 flex items-center justify-between`}>
+                <div className={`p-6 rounded-3xl border opacity-90 flex items-center justify-between ${isYellow ? 'bg-black border-black' : 'bg-zinc-900 border-zinc-800'}`}>
                     <div className="relative z-10">
-                        <h2 className={`text-2xl font-black uppercase mb-1 text-white`}>
+                        <h2 className={`text-2xl font-black uppercase mb-1 ${isYellow ? 'text-white' : 'text-white'}`}>
                             {language === 'pt' ? 'RELATÓRIO PDF' : 'PDF REPORT'}
                         </h2>
-                        <p className={`text-xs font-bold uppercase tracking-wider opacity-60 text-zinc-400`}>
+                        <p className={`text-xs font-bold uppercase tracking-wider opacity-60 ${isYellow ? 'text-zinc-400' : 'text-zinc-400'}`}>
                             {language === 'pt' ? 'GERAÇÃO E ENVIO' : 'GENERATION AND SENDING'}
                         </p>
                     </div>
-                    <div className={`p-3 rounded-xl border opacity-80 border-white/10 bg-white/5`}>
+                    <div className={`p-3 rounded-xl border opacity-80 ${isYellow ? 'bg-zinc-800 border-zinc-700' : 'bg-white/5 border-white/10'}`}>
                         <FileText size={32} className={'text-white'} />
                     </div>
                 </div>
 
                 {/* EMAIL DELIVERY FUNCTION - PRIMARY FOCUS */}
-                <div className={`p-8 rounded-3xl border border-dashed border-zinc-700 bg-zinc-900/50`}>
+                <div className={`p-8 rounded-3xl border border-dashed ${isYellow ? 'bg-black border-black/50 shadow-2xl' : 'bg-zinc-900/50 border-zinc-700'}`}>
                     <div className="flex items-center gap-3 mb-6">
                         <Mail size={24} className={'text-white'} />
                         <h3 className={`text-sm font-black uppercase tracking-widest text-white`}>
@@ -234,7 +248,7 @@ const ReportView: React.FC<ReportViewProps> = ({ language, theme, portfolioItems
                         </h3>
                     </div>
 
-                    <div className="mb-6 p-4 rounded-xl bg-black border border-zinc-800">
+                    <div className={`mb-6 p-4 rounded-xl border ${isYellow ? 'bg-zinc-900 border-zinc-800' : 'bg-black border-zinc-800'}`}>
                         <p className="text-[10px] text-zinc-400 uppercase leading-relaxed">
                             {language === 'pt'
                                 ? 'O RELATÓRIO PDF CONTERÁ TODOS OS DADOS DO SEU PORTFÓLIO E RASTREABILIDADE (POOLS, STAKING, LENDING) DE FORMA ORGANIZADA E PROFISSIONAL.'
@@ -260,13 +274,13 @@ const ReportView: React.FC<ReportViewProps> = ({ language, theme, portfolioItems
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
                                         disabled={sending}
-                                        className={`flex-1 bg-black border rounded-xl p-4 text-xs outline-none focus:border-white transition-all border-zinc-800 text-white placeholder-zinc-700`}
+                                        className={`flex-1 rounded-xl p-4 text-xs outline-none focus:border-white transition-all ${isYellow ? 'bg-zinc-900 border-zinc-800 text-white placeholder-zinc-600' : 'bg-black border-zinc-800 text-white placeholder-zinc-700 border'}`}
                                         required
                                     />
                                     <button
                                         type="submit"
                                         disabled={sending}
-                                        className={`px-8 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 bg-white text-black hover:bg-zinc-200 ${sending ? 'opacity-50 cursor-wait' : ''}`}
+                                        className={`px-8 rounded-xl text-xs font-black uppercase transition-all flex items-center gap-2 ${isYellow ? 'bg-white text-black hover:bg-gray-200' : 'bg-white text-black hover:bg-zinc-200'} ${sending ? 'opacity-50 cursor-wait' : ''}`}
                                     >
                                         {sending ? (language === 'pt' ? 'ENVIANDO...' : 'SENDING...') : (language === 'pt' ? 'ENVIAR AGORA' : 'SEND NOW')}
                                         {!sending && <Share2 size={14} />}

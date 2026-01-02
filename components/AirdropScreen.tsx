@@ -90,7 +90,7 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
     }
 
     return (
-        <div className="w-full pb-20 animate-in fade-in duration-500 bg-[#000] min-h-full -mt-2">
+        <div className={`w-full pb-20 animate-in fade-in duration-500 ${theme === 'yellow' ? 'bg-[#ca8a04]' : 'bg-[#000]'} min-h-full -mt-2`}>
 
             {/* Header Title */}
             <div className="mb-6 px-2 flex justify-between items-end">
@@ -119,7 +119,9 @@ const AirdropScreen: React.FC<AirdropScreenProps> = ({ language, theme, isPremiu
               whitespace-nowrap px-4 py-2 rounded-full text-[10px] font-bold uppercase transition-all
               ${filter === cat
                                 ? 'bg-white text-black scale-105 shadow-[0_0_10px_rgba(255,255,255,0.3)]'
-                                : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}
+                                : theme === 'yellow'
+                                    ? 'bg-black/10 text-black/80 hover:bg-black/20 hover:text-black font-extrabold'
+                                    : 'bg-white/5 text-gray-400 hover:bg-white/10 hover:text-white'}
             `}
                     >
                         {cat}
