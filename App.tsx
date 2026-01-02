@@ -2347,7 +2347,7 @@ const App: React.FC = () => {
                   <input type="text" inputMode="decimal" value={newAssetBuyPrice} onChange={(e) => setNewAssetBuyPrice(e.target.value)} placeholder="0.00" className={`w-full bg-black border-2 ${styles.border} rounded-xl p-4 text-[10px] font-bold text-white outline-none focus:border-yellow-400 transition-colors`} />
                 </div>
               </div>
-              <button type="submit" disabled={!selectedCoin} className={`w-3/4 mx-auto block bg-transparent border border-cyan-400 ${settings.theme === 'white' ? 'text-black' : 'text-white'} font-black py-4 rounded-xl text-sm uppercase shadow-[0_0_15px_rgba(34,211,238,0.5)] active:scale-95 transition-all hover:bg-cyan-400/10 disabled:opacity-30 disabled:cursor-not-allowed mt-auto`}>{TRANSLATIONS[settings.language].general.confirm}</button>
+              <button type="submit" disabled={!selectedCoin} className={`w-3/4 mx-auto block font-black py-4 rounded-xl text-sm uppercase active:scale-95 transition-all disabled:opacity-30 disabled:cursor-not-allowed mt-auto ${settings.theme === 'yellow' ? 'bg-white border-2 border-white text-black shadow-[0_0_20px_rgba(255,255,255,0.4)] hover:bg-gray-100' : `bg-transparent border border-cyan-400 shadow-[0_0_15px_rgba(34,211,238,0.5)] hover:bg-cyan-400/10 ${settings.theme === 'white' ? 'text-black' : 'text-white'}`}`}>{TRANSLATIONS[settings.language].general.confirm}</button>
             </form>
           </Modal>
 

@@ -93,7 +93,7 @@ const AssetList: React.FC<Props> = ({
               key={asset.id}
               onClick={() => onSelect && onSelect(asset)}
               className={`relative grid grid-cols-6 gap-4 items-center p-4 pr-32 rounded-lg border transition-all cursor-pointer hover:bg-white/5 
-                ${theme === 'white' ? 'bg-neutral-950 border-transparent' : theme === 'yellow' ? 'bg-neutral-900/60 border-transparent' : 'bg-neutral-900/60 border-white/5'}
+                ${theme === 'white' ? 'bg-neutral-950 border-transparent' : theme === 'yellow' ? 'bg-black border-transparent' : 'bg-neutral-900/60 border-white/5'}
                 ${isGameTheme ? 'border-blue-900 shadow-[2px_2px_0_0_#2121ff]' : ''}
               `}
 
